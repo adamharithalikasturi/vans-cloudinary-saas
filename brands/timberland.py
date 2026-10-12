@@ -1,63 +1,73 @@
-FOOTWEAR_SUFFIXES = [("-HERO", "Hero View")] + \
-                    [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
-                    [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)]
+import time
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-APPAREL_SUFFIXES = [("-HERO", "Hero View")] + \
-                   [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
-                   [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
-                   [(f"-ALT{i}", f"Alt {i}") for i in range(60, 76)]
-
-ACCESSORY_SUFFIXES = [("-HERO", "Hero View")] + \
-                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
-                     [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
-                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 11)]
-
-ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(
-    [s[0] for s in FOOTWEAR_SUFFIXES + APPAREL_SUFFIXES + ACCESSORY_SUFFIXES]
-))
-
-def parse_timberland_catalog(df, base_cdn_url, preset):
+def scrape_timberland_images(excel_path, output_csv="timberland_scraped_links.csv"):
+    # Load dataset
+    df = pd.read_excel(excel_path)
     sku_col = 'VENDOR ARTICLE NO.'
-    df_unique = df.drop_duplicates(subset=[sku_col]).copy()
+    unique_skus = df[sku_col].dropna().unique()
     
-    sku_url_map = {}
-    all_urls_to_check = set()
-    preset_prefix = f"{preset.strip()}/" if preset.strip() else ""
+    # Setup Selenium options (running headless or visible)
+    chrome_options = Options()
+    # chrome_options.add_argument("--headless")  # Uncomment if you want it to run in the background
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    driver = webdriver.Chrome(options=chrome_options)
+    scraped_data = []
 
-    for _, row in df_unique.iterrows():
-        sku = str(row[sku_col]).strip()
-        if not sku or sku == 'nan' or sku.upper() == 'NOT ASSIGNED':
-            continue
+    try:
+        for sku in unique_skus:
+            sku_str = str(sku).strip()
+            if not sku_str or sku_str == 'nan' or sku_str.upper() == 'NOT ASSIGNED':
+                continue
+                
+            # Clean SKU for search if needed (e.g., removing leading zeros or trailing Z)
+            search_query = sku_str.lstrip('0').rstrip('Z')
             
-        division = str(row.get('DIVISION', 'FOOTWEAR')).upper()
-        silhouette = str(row.get('AH1 SILLOUTE', '')).upper()
-        
-        # Clean SKU and map to Timberland Cloudinary Asset ID format (e.g. TB02731R001 -> TB12731R001)
-        clean_sku = sku.lstrip('0')
-        if clean_sku.startswith('TB0'):
-            asset_root = 'TB1' + clean_sku[3:]
-        elif clean_sku.startswith('TB'):
-            asset_root = 'TB1' + clean_sku[2:]
-        else:
-            asset_root = clean_sku
-
-        if 'FOOTWEAR' in division or 'SHOES' in silhouette:
-            active_suffixes = [s[0] for s in FOOTWEAR_SUFFIXES]
-        elif 'APPAREL' in division or silhouette in ['TOPS', 'BOTTOMS']:
-            active_suffixes = [s[0] for s in APPAREL_SUFFIXES]
-        else:
-            active_suffixes = [s[0] for s in ACCESSORY_SUFFIXES]
+            # Timberland search URL structure
+            search_url = f"https://www.timberland.com/en-us/search?q={search_query}"
+            driver.get(search_url)
             
-        sku_url_map[sku] = {
-            'root': asset_root,
-            'division': division if division != '#' else 'FOOTWEAR',
-            'urls': {}
-        }
-        
-        for suffix in active_suffixes:
-            # Cloudinary asset paths can be checked with .png or .jpg
-            url = f"{base_cdn_url}{preset_prefix}{asset_root}{suffix}.png"
-            sku_url_map[sku]['urls'][suffix] = url
-            all_urls_to_check.add(url)
+            images_found = set()
+            try:
+                # Wait for product grid or product images to load
+                WebDriverWait(driver, 6).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='assets.timberland.com']"))
+                )
+                
+                # Extract all image elements pointing to Cloudinary CDN
+                img_elements = driver.find_elements(By.CSS_SELECTOR, "img")
+                for img in img_elements:
+                    src = img.get_attribute("src")
+                    if src and "assets.timberland.com/images" in src:
+                        images_found.add(src)
+                        
+            except Exception as e:
+                print(f"Timeout or no images found for SKU: {sku_str}")
 
-    return sku_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
+            # Save found links for this SKU
+            for img_url in images_found:
+                scraped_data.append({
+                    'VENDOR ARTICLE NO.': sku_str,
+                    'IMAGE_URL': img_url
+                })
+                
+            print(f"Processed SKU {sku_str}: Found {len(images_found)} images.")
+            time.sleep(2) # Polite delay between requests
+
+    finally:
+        driver.quit()
+        
+    # Save results to CSV
+    result_df = pd.DataFrame(scraped_data)
+    result_df.to_csv(output_csv, index=False)
+    print(f"Scraping complete! Saved to {output_csv}")
+
+if __name__ == "__main__":
+    scrape_timberland_images("261012-timberland-list.xlsx")
