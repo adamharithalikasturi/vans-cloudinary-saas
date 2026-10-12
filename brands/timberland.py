@@ -6,68 +6,71 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-def scrape_timberland_images(excel_path, output_csv="timberland_scraped_links.csv"):
-    # Load dataset
-    df = pd.read_excel(excel_path)
+TIMBERLAND_SUFFIXES = [("-HERO", "Hero View")] + \
+                      [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                      [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)]
+
+ALL_UNIQUE_SUFFIXES = list(dict.fromkeys([s[0] for s in TIMBERLAND_SUFFIXES]))
+
+def scrape_timberland_catalog(df, base_cdn_url="", preset=""):
     sku_col = 'VENDOR ARTICLE NO.'
-    unique_skus = df[sku_col].dropna().unique()
+    df_unique = df.drop_duplicates(subset=[sku_col]).copy()
     
-    # Setup Selenium options (running headless or visible)
+    sku_url_map = {}
+    all_urls_to_check = set()
+
+    # Setup Selenium options for headless execution
     chrome_options = Options()
-    # chrome_options.add_argument("--headless")  # Uncomment if you want it to run in the background
+    chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(options=chrome_options)
-    scraped_data = []
 
     try:
-        for sku in unique_skus:
-            sku_str = str(sku).strip()
-            if not sku_str or sku_str == 'nan' or sku_str.upper() == 'NOT ASSIGNED':
+        for _, row in df_unique.iterrows():
+            sku = str(row[sku_col]).strip()
+            if not sku or sku == 'nan' or sku.upper() == 'NOT ASSIGNED':
                 continue
                 
-            # Clean SKU for search if needed (e.g., removing leading zeros or trailing Z)
-            search_query = sku_str.lstrip('0').rstrip('Z')
+            division = str(row.get('DIVISION', 'FOOTWEAR')).upper()
+            silhouette = str(row.get('AH1 SILLOUTE', '')).upper()
             
-            # Timberland search URL structure
+            # Clean SKU for searching on Timberland's site
+            search_query = sku.lstrip('0').rstrip('Z')
             search_url = f"https://www.timberland.com/en-us/search?q={search_query}"
-            driver.get(search_url)
             
-            images_found = set()
+            driver.get(search_url)
+            images_found = {}
+            
             try:
-                # Wait for product grid or product images to load
-                WebDriverWait(driver, 6).until(
+                WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, "img[src*='assets.timberland.com']"))
                 )
-                
-                # Extract all image elements pointing to Cloudinary CDN
                 img_elements = driver.find_elements(By.CSS_SELECTOR, "img")
                 for img in img_elements:
                     src = img.get_attribute("src")
                     if src and "assets.timberland.com/images" in src:
-                        images_found.add(src)
-                        
-            except Exception as e:
-                print(f"Timeout or no images found for SKU: {sku_str}")
+                        # Extract suffix type (e.g. -HERO, -ALT1) from URL if present
+                        matched_suffix = "-HERO"
+                        for suffix, _ in TIMBERLAND_SUFFIXES:
+                            if suffix.lower() in src.lower():
+                                matched_suffix = suffix
+                                break
+                        images_found[matched_suffix] = src
+                        all_urls_to_check.add(src)
+            except Exception:
+                pass # Fallback or empty if not found via search grid
 
-            # Save found links for this SKU
-            for img_url in images_found:
-                scraped_data.append({
-                    'VENDOR ARTICLE NO.': sku_str,
-                    'IMAGE_URL': img_url
-                })
-                
-            print(f"Processed SKU {sku_str}: Found {len(images_found)} images.")
-            time.sleep(2) # Polite delay between requests
+            sku_url_map[sku] = {
+                'root': search_query,
+                'division': division if division != '#' else 'FOOTWEAR',
+                'urls': images_found
+            }
+            time.sleep(1) # Polite pause between queries
 
     finally:
         driver.quit()
-        
-    # Save results to CSV
-    result_df = pd.DataFrame(scraped_data)
-    result_df.to_csv(output_csv, index=False)
-    print(f"Scraping complete! Saved to {output_csv}")
 
-if __name__ == "__main__":
-    scrape_timberland_images("261012-timberland-list.xlsx")
+    return sku_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
