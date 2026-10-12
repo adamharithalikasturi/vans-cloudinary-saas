@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vans Asset Verifier & Inspector SaaS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+    <style>
+        .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; align-items: center; position: relative; cursor: grab; user-select: none; }
+        .card.selected { border: 2px solid #3b82f6; background: #0f172a; }
+        .card img { width: 100%; height: 150px; object-fit: contain; border-radius: 4px; margin-top: 18px; pointer-events: none; }
+        .popout-bar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(100px); background: #0f172a; border: 1px solid #334155; color: white; padding: 10px 20px; border-radius: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 16px; z-index: 9999; transition: transform 0.25s ease; }
+        .popout-bar.visible { transform: translateX(-50%) translateY(0); }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="bg-slate-900 border-b border-slate-800 p-4 px-8 flex justify-between items-center">
+        <h1 class="text-xl font-bold text-white flex items-center gap-2">👟 Vans / Cloudinary Asset Availability Tracker</h1>
+        <span class="text-xs bg-red-600/20 text-red-400 px-3 py-1 rounded-full font-semibold border border-red-500/30">Enterprise SaaS Mode</span>
+    </header>
+
+    <div class="flex flex-1">
+        <!-- Sidebar Configuration -->
+        <aside class="w-80 bg-slate-900 border-r border-slate-800 p-6 space-y-4">
+            <h2 class="font-bold text-sm uppercase tracking-wider text-slate-400">⚙️ Configuration</h2>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Base CDN URL</label>
+                <input type="text" id="baseCdn" value="https://img.vans.com/image/upload/" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Transformation Preset</label>
+                <input type="text" id="preset" placeholder="Optional" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Max Concurrent Requests</label>
+                <input type="number" id="maxConcurrent" value="400" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
+            </div>
+            <div>
+                <label class="block text-xs text-slate-400 mb-1">Timeout (sec)</label>
+                <input type="number" id="timeout" value="5" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
+            </div>
+            <hr class="border-slate-800">
+            <div>
+                <label class="block text-xs font-semibold text-slate-400 mb-2">Upload SAP File (.csv / .xlsx)</label>
+                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="w-full text-xs text-slate-400 file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-red-600 file:text-white hover:file:bg-red-700 cursor-pointer">
+            </div>
+            <button onclick="runVerification()" id="verifyBtn" class="w-full bg-red-600 hover:bg-red-700 font-bold py-2.5 rounded text-sm transition cursor-pointer">🚀 Start Verification</button>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="flex-1 p-8 overflow-y-auto">
+            <div id="statusContainer" class="hidden mb-6 p-4 bg-slate-900 border border-slate-800 rounded text-sm text-amber-400 font-medium animate-pulse">Processing SAP records and probing Cloudinary CDN...</div>
+            <div id="resultsArea" class="space-y-6 hidden">
+                <div class="grid grid-cols-4 gap-4">
+                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Unique SAP VANs</div><div id="mTotal" class="text-2xl font-bold">0</div></div>
+                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Active VANs</div><div id="mActive" class="text-2xl font-bold text-emerald-400">0</div></div>
+                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Missing VANs</div><div id="mMissing" class="text-2xl font-bold text-rose-400">0</div></div>
+                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Valid Images</div><div id="mImages" class="text-2xl font-bold text-blue-400">0</div></div>
+                </div>
+                <button onclick="downloadMasterReport()" class="bg-emerald-600 hover:bg-emerald-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Download Master Excel Report</button>
+                <hr class="border-slate-800">
+                <h2 class="text-lg font-bold">🖼️ Interactive Visual Inspector</h2>
+                <input type="text" id="searchInput" placeholder="Search SAP VAN(s) separated by commas..." class="w-full bg-slate-900 border border-slate-800 rounded p-3 text-sm" oninput="renderInspector()">
+                <div id="inspectorContainer" class="space-y-6"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Floating Pop-out Bar -->
+    <div id="popoutBar" class="popout-bar">
+        <span id="selectedCountText">0 selected</span>
+        <button onclick="downloadSelectedBundle()" class="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded text-xs font-bold cursor-pointer">📥 Download Selected for Shopify</button>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>
