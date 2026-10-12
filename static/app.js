@@ -5,9 +5,10 @@ let removedImageIds = new Set();
 
 async function runVerification() {
     const fileInput = document.getElementById('fileInput');
-    if (!fileInput.files[0]) { alert('Please upload an SAP file first.'); return; }
+    if (!fileInput.files[0]) { alert('Please upload a catalog file first.'); return; }
 
     const formData = new FormData();
+    formData.append('brand', document.getElementById('brandSelect').value);
     formData.append('file', fileInput.files[0]);
     formData.append('base_cdn_url', document.getElementById('baseCdn').value);
     formData.append('preset', document.getElementById('preset').value);
@@ -26,12 +27,11 @@ async function runVerification() {
         removedImageIds.clear();
         selectedImageIds.clear();
         
-        document.getElementById('mTotal').innerText = globalData.summary.total_vans.toLocaleString();
-        document.getElementById('mActive').innerText = globalData.summary.active_vans.toLocaleString();
-        document.getElementById('mMissing').innerText = (globalData.summary.total_vans - globalData.summary.active_vans).toLocaleString();
+        document.getElementById('mTotal').innerText = globalData.summary.total_items.toLocaleString();
+        document.getElementById('mActive').innerText = globalData.summary.active_items.toLocaleString();
+        document.getElementById('mMissing').innerText = (globalData.summary.total_items - globalData.summary.active_items).toLocaleString();
         document.getElementById('mImages').innerText = globalData.summary.total_images_found.toLocaleString();
 
-        // Populate Division filter
         const divisions = [...new Set(Object.values(globalData.van_url_map).map(v => v.division))];
         const divSelect = document.getElementById('divFilter');
         divSelect.innerHTML = '<option value="All Divisions">All Divisions</option>' + divisions.map(d => `<option value="${d}">${d}</option>`).join('');
@@ -56,53 +56,52 @@ function renderInspector() {
     const container = document.getElementById('inspectorContainer');
     container.innerHTML = '';
 
-    let displayVans = [];
+    let displayItems = [];
     const searchTokens = searchVal ? searchVal.split(',').map(v => v.trim()).filter(Boolean) : [];
 
-    for (let [vanCode, info] of Object.entries(globalData.van_url_map)) {
-        if (excludedVans.has(vanCode)) continue;
+    for (let [itemCode, info] of Object.entries(globalData.van_url_map)) {
+        if (excludedVans.has(itemCode)) continue;
         if (selectedDiv !== 'All Divisions' && info.division !== selectedDiv) continue;
         
         const hasActive = Object.values(info.urls).some(u => globalData.valid_url_map[u]);
         if (statusFilter === 'Active Only' && !hasActive) continue;
         if (statusFilter === 'Missing Only' && hasActive) continue;
 
-        if (searchTokens.length > 0 && !searchTokens.includes(vanCode)) continue;
-        displayVans.push(vanCode);
+        if (searchTokens.length > 0 && !searchTokens.includes(itemCode)) continue;
+        displayItems.push(itemCode);
     }
 
-    // Global Export Rows for Top Button
     let globalShopifyRows = [];
-    displayVans.forEach(vanCode => {
-        let info = globalData.van_url_map[vanCode];
-        let items = getActiveItems(vanCode);
+    displayItems.forEach(itemCode => {
+        let info = globalData.van_url_map[itemCode];
+        let items = getActiveItems(itemCode);
         items.forEach((item, idx) => {
             globalShopifyRows.push({
-                "Handle": vanCode.toLowerCase(),
-                "SAP VAN": vanCode,
+                "Handle": itemCode.toLowerCase(),
+                "Item Code": itemCode,
                 "Image Position": idx + 1,
                 "Image Src": item.url,
-                "Image Alt Text": `${vanCode} - ${item.label}`,
-                "MH3 Division": info.division
+                "Image Alt Text": `${itemCode} - ${item.label}`,
+                "Division": info.division
             });
         });
     });
 
     const exportContainer = document.getElementById('globalExportContainer');
-    if (displayVans.length > 0 && globalShopifyRows.length > 0) {
-        exportContainer.innerHTML = `<button onclick='downloadShopifyBatch(${JSON.stringify(globalShopifyRows)}, "Shopify_All_Displayed_Images_Export.xlsx")' class="bg-red-600 hover:bg-red-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Export All Displayed Images (${globalShopifyRows.length} total across ${displayVans.length} products) for Shopify (Excel)</button>`;
+    if (displayItems.length > 0 && globalShopifyRows.length > 0) {
+        exportContainer.innerHTML = `<button onclick='downloadShopifyBatch(${JSON.stringify(globalShopifyRows)}, "Shopify_All_Displayed_Images_Export.xlsx")' class="bg-red-600 hover:bg-red-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Export All Displayed Images (${globalShopifyRows.length} total across ${displayItems.length} products) for Shopify (Excel)</button>`;
     } else {
         exportContainer.innerHTML = '';
     }
 
-    if (displayVans.length === 0) {
-        container.innerHTML = '<div class="text-slate-400 text-sm italic">No matching SAP VANs found or selected.</div>';
+    if (displayItems.length === 0) {
+        container.innerHTML = '<div class="text-slate-400 text-sm italic">No matching catalog items found or selected.</div>';
         return;
     }
 
-    displayVans.forEach(vanCode => {
-        let info = globalData.van_url_map[vanCode];
-        let items = getActiveItems(vanCode);
+    displayItems.forEach(itemCode => {
+        let info = globalData.van_url_map[itemCode];
+        let items = getActiveItems(itemCode);
         let allSelected = items.length > 0 && items.every(i => selectedImageIds.has(i.id));
 
         const section = document.createElement('div');
@@ -111,24 +110,24 @@ function renderInspector() {
             <div class="flex justify-between items-center">
                 <div class="flex items-center gap-4">
                     <label class="flex items-center gap-2 text-xs font-semibold cursor-pointer text-slate-300">
-                        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="togglePartition('${vanCode}', this.checked)" class="cursor-pointer"> Select Partition
+                        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="togglePartition('${itemCode}', this.checked)" class="cursor-pointer"> Select Partition
                     </label>
-                    <h3 class="font-bold text-base text-blue-400">Product Partition: ${vanCode}</h3>
+                    <h3 class="font-bold text-base text-blue-400">Product Partition: ${itemCode}</h3>
                 </div>
-                <button onclick="removeProduct('${vanCode}')" class="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-3 py-1 rounded text-xs font-bold transition cursor-pointer">🗑️ Remove Product</button>
+                <button onclick="removeProduct('${itemCode}')" class="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-3 py-1 rounded text-xs font-bold transition cursor-pointer">🗑️ Remove Product</button>
             </div>
             <div class="grid grid-cols-4 gap-4 text-xs text-slate-400">
-                <div>Root VAN: <span class="text-white font-mono">${info.root}</span></div>
+                <div>Root Code: <span class="text-white font-mono">${info.root}</span></div>
                 <div>Division: <span class="text-white">${info.division}</span></div>
                 <div>Status: <span class="${items.length > 0 ? 'text-emerald-400' : 'text-rose-400'}">${items.length > 0 ? '🟢 Active' : '🔴 Missing'}</span></div>
                 <div>Images Active: <span class="text-white">${items.length}</span></div>
             </div>
             <hr class="border-slate-800">
-            <div class="grid-container" id="grid_${vanCode}">
+            <div class="grid-container" id="grid_${itemCode}">
                 ${items.map((item, idx) => `
                     <div class="card ${selectedImageIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
                         <input type="checkbox" class="absolute top-2 left-2 cursor-pointer z-10" ${selectedImageIds.has(item.id) ? 'checked' : ''} onclick="toggleSelect('${item.id}')">
-                        <span class="absolute top-2 left-10 bg-black/70 text-[10px] px-2 py-0.5 rounded font-mono">Pos ${idx + 1}</span>
+                        <span class="absolute top-2 left-10 bg-black/70 text-[10px] px-2 py-0.5 rounded font-mono pos-badge">Pos ${idx + 1}</span>
                         <button onclick="removeCard('${item.id}')" class="absolute top-2 right-2 bg-rose-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold hover:scale-110 transition cursor-pointer z-10" title="Remove image">✕</button>
                         <img src="${item.url}" alt="${item.label}">
                         <div class="mt-2 text-xs font-bold text-center">${item.label}</div>
@@ -136,27 +135,37 @@ function renderInspector() {
                     </div>
                 `).join('')}
             </div>
-            ${items.length > 0 ? `<button onclick="downloadSinglePartition('${vanCode}')" class="bg-slate-800 hover:bg-slate-700 font-bold px-3 py-1.5 rounded text-xs cursor-pointer">📥 Download Shopify Excel for \`${vanCode}\` (${items.length} images)</button>` : ''}
+            ${items.length > 0 ? `<button onclick="downloadSinglePartition('${itemCode}')" class="bg-slate-800 hover:bg-slate-700 font-bold px-3 py-1.5 rounded text-xs cursor-pointer">📥 Download Shopify Excel for \`${itemCode}\` (${items.length} images)</button>` : ''}
         `;
         container.appendChild(section);
 
+        // --- RESTORED SORTABLEJS DRAG-AND-DROP INITIALIZATION ---
         if (items.length > 0) {
-            new Sortable(document.getElementById(`grid_${vanCode}`), {
+            const gridEl = document.getElementById(`grid_${itemCode}`);
+            new Sortable(gridEl, {
                 animation: 150,
                 ghostClass: 'opacity-30',
-                onEnd: function() { renderInspector(); }
+                dragClass: 'scale-105',
+                onEnd: function() {
+                    // Update position badges dynamically on drag completion
+                    const children = gridEl.children;
+                    for (let i = 0; i < children.length; i++) {
+                        const badge = children[i].querySelector('.pos-badge');
+                        if (badge) badge.innerText = `Pos ${i + 1}`;
+                    }
+                }
             });
         }
     });
 }
 
-function getActiveItems(vanCode) {
-    let info = globalData.van_url_map[vanCode];
+function getActiveItems(itemCode) {
+    let info = globalData.van_url_map[itemCode];
     return Object.entries(info.urls)
-        .filter(([suffix, url]) => globalData.valid_url_map[url] && !removedImageIds.has(`${vanCode}_${suffix}`))
+        .filter(([suffix, url]) => globalData.valid_url_map[url] && !removedImageIds.has(`${itemCode}_${suffix}`))
         .map(([suffix, url]) => ({
-            id: `${vanCode}_${suffix}`,
-            label: suffix === '-HERO' ? 'Hero View' : `Alt ${suffix.replace('-ALT', '')}`,
+            id: `${itemCode}_${suffix}`,
+            label: suffix === '-HERO' ? 'Hero View' : (suffix.startsWith('_') ? `View ${suffix}` : `Alt ${suffix.replace('-ALT', '')}`),
             url: url
         }));
 }
@@ -165,11 +174,17 @@ function toggleSelect(id) {
     if (selectedImageIds.has(id)) selectedImageIds.delete(id);
     else selectedImageIds.add(id);
     updatePopoutBar();
-    renderInspector();
+    
+    // Toggle card visual selection state immediately without full re-render
+    const cardEl = document.querySelector(`.card[data-id="${id}"]`);
+    if (cardEl) {
+        if (selectedImageIds.has(id)) cardEl.classList.add('selected');
+        else cardEl.classList.remove('selected');
+    }
 }
 
-function togglePartition(vanCode, select) {
-    let items = getActiveItems(vanCode);
+function togglePartition(itemCode, select) {
+    let items = getActiveItems(itemCode);
     items.forEach(i => {
         if (select) selectedImageIds.add(i.id);
         else selectedImageIds.delete(i.id);
@@ -185,9 +200,9 @@ function removeCard(id) {
     renderInspector();
 }
 
-function removeProduct(vanCode) {
-    excludedVans.add(vanCode);
-    getActiveItems(vanCode).forEach(i => selectedImageIds.delete(i.id));
+function removeProduct(itemCode) {
+    excludedVans.add(itemCode);
+    getActiveItems(itemCode).forEach(i => selectedImageIds.delete(i.id));
     updatePopoutBar();
     renderInspector();
 }
@@ -205,36 +220,36 @@ async function downloadMasterReport() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ van_url_map: globalData.van_url_map, valid_url_map: globalData.valid_url_map })
     });
-    triggerDownload(await response.blob(), 'SAP_VAN_Cloudinary_Verified_Master.xlsx');
+    triggerDownload(await response.blob(), 'Cloudinary_Verified_Master.xlsx');
 }
 
-async function downloadSinglePartition(vanCode) {
-    let info = globalData.van_url_map[vanCode];
-    let items = getActiveItems(vanCode);
+async function downloadSinglePartition(itemCode) {
+    let info = globalData.van_url_map[itemCode];
+    let items = getActiveItems(itemCode);
     let rows = items.map((item, idx) => ({
-        "Handle": vanCode.toLowerCase(),
-        "SAP VAN": vanCode,
+        "Handle": itemCode.toLowerCase(),
+        "Item Code": itemCode,
         "Image Position": idx + 1,
         "Image Src": item.url,
-        "Image Alt Text": `${vanCode} - ${item.label}`,
-        "MH3 Division": info.division
+        "Image Alt Text": `${itemCode} - ${item.label}`,
+        "Division": info.division
     }));
-    downloadShopifyBatch(rows, `Shopify_Export_${vanCode}.xlsx`);
+    downloadShopifyBatch(rows, `Shopify_Export_${itemCode}.xlsx`);
 }
 
 async function downloadSelectedBundle() {
     let rows = [];
-    for (let [vanCode, info] of Object.entries(globalData.van_url_map)) {
-        let items = getActiveItems(vanCode);
+    for (let [itemCode, info] of Object.entries(globalData.van_url_map)) {
+        let items = getActiveItems(itemCode);
         items.forEach((item, idx) => {
             if (selectedImageIds.has(item.id)) {
                 rows.push({
-                    "Handle": vanCode.toLowerCase(),
-                    "SAP VAN": vanCode,
+                    "Handle": itemCode.toLowerCase(),
+                    "Item Code": itemCode,
                     "Image Position": rows.length + 1,
                     "Image Src": item.url,
-                    "Image Alt Text": `${vanCode} - ${item.label}`,
-                    "MH3 Division": info.division
+                    "Image Alt Text": `${itemCode} - ${item.label}`,
+                    "Division": info.division
                 });
             }
         });
