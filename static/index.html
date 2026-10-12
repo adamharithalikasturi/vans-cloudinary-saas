@@ -1,106 +1,112 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Brand Enterprise Asset Verifier & Inspector</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-    <style>
-        .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; align-items: center; position: relative; cursor: grab; user-select: none; }
-        .card.selected { border: 2px solid #3b82f6; background: #0f172a; }
-        .card img { width: 100%; height: 150px; object-fit: contain; border-radius: 4px; margin-top: 18px; pointer-events: none; }
-        .popout-bar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(100px); background: #0f172a; border: 1px solid #334155; color: white; padding: 10px 20px; border-radius: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 16px; z-index: 9999; transition: transform 0.25s ease; }
-        .popout-bar.visible { transform: translateX(-50%) translateY(0); }
-    </style>
+  <meta charset="UTF-8">
+  <title>Multi-Brand Enterprise Cloudinary SaaS</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  <style>
+    .grid-container {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: 16px;
+    }
+    .popout-bar {
+      position: fixed;
+      bottom: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      transition: bottom 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      z-index: 9999;
+    }
+    .popout-bar.visible {
+      bottom: 24px;
+    }
+  </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
-    <header class="bg-slate-900 border-b border-slate-800 p-4 px-8 flex justify-between items-center">
-        <h1 class="text-xl font-bold text-white flex items-center gap-2">👟 Multi-Brand Cloudinary Asset Availability Tracker</h1>
-        <span class="text-xs bg-red-600/20 text-red-400 px-3 py-1 rounded-full font-semibold border border-red-500/30">Enterprise Multi-Brand SaaS</span>
-    </header>
-
-    <div class="flex flex-1">
-        <!-- Sidebar Configuration -->
-        <aside class="w-80 bg-slate-900 border-r border-slate-800 p-6 space-y-4">
-            <h2 class="font-bold text-sm uppercase tracking-wider text-slate-400">⚙️ Configuration</h2>
-            
-            <!-- Brand Selector Dropdown -->
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Select Brand</label>
-                <select id="brandSelect" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm text-white" onchange="updateDefaultCdn()">
-                    <option value="vans">Vans</option>
-                    <option value="timberland">Timberland</option>
-                </select>
-            </div>
-
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Base CDN URL</label>
-                <input type="text" id="baseCdn" value="https://img.vans.com/image/upload/" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Transformation Preset</label>
-                <input type="text" id="preset" placeholder="Optional" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Max Concurrent Requests</label>
-                <input type="number" id="maxConcurrent" value="400" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Timeout (sec)</label>
-                <input type="number" id="timeout" value="5" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <hr class="border-slate-800">
-            <div>
-                <label class="block text-xs font-semibold text-slate-400 mb-2">Upload Catalog File (.csv / .xlsx)</label>
-                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="w-full text-xs text-slate-400 file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-red-600 file:text-white hover:file:bg-red-700 cursor-pointer">
-            </div>
-            <button onclick="runVerification()" id="verifyBtn" class="w-full bg-red-600 hover:bg-red-700 font-bold py-2.5 rounded text-sm transition cursor-pointer">🚀 Start Verification</button>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="flex-1 p-8 overflow-y-auto">
-            <div id="statusContainer" class="hidden mb-6 p-4 bg-slate-900 border border-slate-800 rounded text-sm text-amber-400 font-medium animate-pulse">Processing catalog records and probing CDN...</div>
-            <div id="resultsArea" class="space-y-6 hidden">
-                <div class="grid grid-cols-4 gap-4">
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Total Items</div><div id="mTotal" class="text-2xl font-bold">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Active Items</div><div id="mActive" class="text-2xl font-bold text-emerald-400">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Missing Items</div><div id="mMissing" class="text-2xl font-bold text-rose-400">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Valid Images</div><div id="mImages" class="text-2xl font-bold text-blue-400">0</div></div>
-                </div>
-                <button onclick="downloadMasterReport()" class="bg-emerald-600 hover:bg-emerald-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Download Master Excel Report</button>
-                <div id="globalExportContainer"></div>
-                <hr class="border-slate-800">
-                <h2 class="text-lg font-bold">🖼️ Interactive Visual Inspector & Exporter</h2>
-                <div class="grid grid-cols-2 gap-4">
-                    <select id="divFilter" onchange="renderInspector()" class="bg-slate-900 border border-slate-800 rounded p-2 text-sm"><option value="All Divisions">All Divisions</option></select>
-                    <select id="statusFilter" onchange="renderInspector()" class="bg-slate-900 border border-slate-800 rounded p-2 text-sm"><option value="All Products">All Products</option><option value="Active Only">Active Only</option><option value="Missing Only">Missing Only</option></select>
-                </div>
-                <input type="text" id="searchInput" placeholder="Search Item/SKU(s) separated by commas..." class="w-full bg-slate-900 border border-slate-800 rounded p-3 text-sm" oninput="renderInspector()">
-                <div id="inspectorContainer" class="space-y-6"></div>
-            </div>
-        </main>
+<body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
+  <div class="max-w-7xl mx-auto space-y-8">
+    
+    <!-- Header -->
+    <div>
+      <h1 class="text-3xl font-extrabold flex items-center gap-3">👟 Multi-Brand Asset Verifier & Inspector</h1>
+      <p class="text-slate-400 text-sm mt-1">Upload ERP catalog files to validate images across CDNs, inspect partitions, and generate Shopify import sheets.</p>
     </div>
 
-    <!-- Floating Pop-out Bar -->
-    <div id="popoutBar" class="popout-bar">
-        <span id="selectedCountText">0 selected</span>
-        <button onclick="downloadSelectedBundle()" class="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded text-xs font-bold cursor-pointer">📥 Download Selected for Export</button>
+    <!-- Configuration Sidebar / Panel -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-900 border border-slate-800 p-6 rounded-xl">
+      <div>
+        <label class="block text-xs font-bold text-slate-300 mb-1">Select Brand</label>
+        <select id="brandSelect" onchange="updateDefaultCdn()" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-sm">
+          <option value="vans">Vans</option>
+          <option value="timberland">Timberland</option>
+          <option value="columbia">Columbia</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-300 mb-1">Catalog File (CSV / Excel)</label>
+        <input type="file" id="fileInput" accept=".csv, .xlsx, .xls" class="w-full text-xs text-slate-400 file:mr-2 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer">
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-300 mb-1">Base CDN URL</label>
+        <input type="text" id="baseCdn" value="https://img.vans.com/image/upload/" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono">
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-300 mb-1">Transformation Preset</label>
+        <input type="text" id="preset" placeholder="Optional" class="w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono">
+      </div>
     </div>
 
-    <script>
-        // Helper function to auto-update base CDN URL based on selected brand
-        function updateDefaultCdn() {
-            const brand = document.getElementById('brandSelect').value;
-            const cdnInput = document.getElementById('baseCdn');
-            if (brand === 'vans') {
-                cdnInput.value = 'https://img.vans.com/image/upload/';
-            } else if (brand === 'timberland') {
-                cdnInput.value = 'https://images.timberland.com/is/image/Timberland/'; // Adjust to Timberland's CDN domain when ready
-            }
-        }
-    </script>
-    <script src="/app.js"></script>
+    <div class="flex items-center gap-4">
+      <button id="verifyBtn" onclick="runVerification()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6 py-2.5 rounded-lg text-sm transition cursor-pointer shadow-lg">🚀 Start Verification</button>
+      <div id="statusContainer" class="hidden text-sm text-blue-400 animate-pulse flex items-center gap-2">
+        <span>Probing CDN endpoints asynchronously... Please wait.</span>
+      </div>
+    </div>
+
+    <!-- Results Area -->
+    <div id="resultsArea" class="hidden space-y-8">
+      <hr class="border-slate-800">
+      
+      <!-- Metrics -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center"><div class="text-xs text-slate-400">Total Unique Items</div><div id="mTotal" class="text-2xl font-bold mt-1">0</div></div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center"><div class="text-xs text-slate-400">Active (With Images)</div><div id="mActive" class="text-2xl font-bold text-emerald-400 mt-1">0</div></div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center"><div class="text-xs text-slate-400">Missing Images</div><div id="mMissing" class="text-2xl font-bold text-rose-400 mt-1">0</div></div>
+        <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl text-center"><div class="text-xs text-slate-400">Total Valid Images</div><div id="mImages" class="text-2xl font-bold text-blue-400 mt-1">0</div></div>
+      </div>
+
+      <div class="flex gap-4">
+        <button onclick="downloadMasterReport()" class="bg-emerald-600 hover:bg-emerald-700 font-bold px-4 py-2 rounded text-sm cursor-pointer shadow">📥 Download Master Excel Report</button>
+      </div>
+
+      <!-- Filters & Inspector -->
+      <div class="bg-slate-900/50 border border-slate-800 p-6 rounded-xl space-y-6">
+        <h2 class="text-lg font-bold">🖼️ Interactive Visual Inspector & Shopify Exporter</h2>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <input type="text" id="searchInput" oninput="renderInspector()" placeholder="Search item codes separated by commas..." class="bg-slate-950 border border-slate-700 rounded p-2 text-sm">
+          <select id="divFilter" onchange="renderInspector()" class="bg-slate-950 border border-slate-700 rounded p-2 text-sm"><option value="All Divisions">All Divisions</option></select>
+          <select id="statusFilter" onchange="renderInspector()" class="bg-slate-950 border border-slate-700 rounded p-2 text-sm">
+            <option value="All Products">All Products</option>
+            <option value="Active Only">Active Only</option>
+            <option value="Missing Only">Missing Only</option>
+          </select>
+        </div>
+
+        <div id="globalExportContainer"></div>
+        <div id="inspectorContainer" class="space-y-6"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Floating Pop-out Bar -->
+  <div id="popoutBar" class="popout-bar bg-slate-900 border border-slate-700 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-6">
+    <span id="selectedCountText" class="text-sm font-semibold">0 selected</span>
+    <button onclick="downloadSelectedBundle()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-full text-xs font-bold transition cursor-pointer">📥 Download Selected Bundle</button>
+  </div>
+
+  <script src="/app.js"></script>
 </body>
 </html>
