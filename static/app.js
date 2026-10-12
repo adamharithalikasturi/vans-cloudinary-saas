@@ -3,19 +3,6 @@ let selectedImageIds = new Set();
 let excludedVans = new Set();
 let removedImageIds = new Set();
 
-// Automatically update default CDN input when brand changes
-function updateDefaultCdn() {
-    const brand = document.getElementById('brandSelect').value;
-    const cdnInput = document.getElementById('baseCdn');
-    if (brand === 'vans') {
-        cdnInput.value = 'https://img.vans.com/image/upload/';
-    } else if (brand === 'timberland') {
-        cdnInput.value = 'https://assets.timberland.com/';
-    } else if (brand === 'columbia') {
-        cdnInput.value = 'https://www.columbia.com/dw/image/v2/AABW_PRD/on/demandware.static/-/Sites-columbia-master/default/';
-    }
-}
-
 async function runVerification() {
     const fileInput = document.getElementById('fileInput');
     if (!fileInput.files[0]) { alert('Please upload a catalog file first.'); return; }
@@ -33,10 +20,7 @@ async function runVerification() {
 
     try {
         const response = await fetch('/api/verify-catalog', { method: 'POST', body: formData });
-        if (!response.ok) {
-            const errJson = await response.json();
-            throw new Error(errJson.detail || 'Verification failed.');
-        }
+        if (!response.ok) throw new Error('Verification failed.');
         
         globalData = await response.json();
         excludedVans.clear();
@@ -56,7 +40,7 @@ async function runVerification() {
         document.getElementById('resultsArea').classList.remove('hidden');
         renderInspector();
     } catch (err) {
-        alert('Error: ' + err.message);
+        alert('Error processing file.');
         document.getElementById('statusContainer').classList.add('hidden');
     } finally {
         document.getElementById('verifyBtn').disabled = false;
@@ -105,13 +89,13 @@ function renderInspector() {
 
     const exportContainer = document.getElementById('globalExportContainer');
     if (displayItems.length > 0 && globalShopifyRows.length > 0) {
-        exportContainer.innerHTML = `<button onclick='downloadShopifyBatch(${JSON.stringify(globalShopifyRows)}, "Shopify_All_Displayed_Images_Export.xlsx")' class="bg-red-600 hover:bg-red-700 font-bold px-4 py-2 rounded text-sm cursor-pointer shadow">📥 Export All Displayed Images (${globalShopifyRows.length} total across ${displayItems.length} products) for Shopify (Excel)</button>`;
+        exportContainer.innerHTML = `<button onclick='downloadShopifyBatch(${JSON.stringify(globalShopifyRows)}, "Shopify_All_Displayed_Images_Export.xlsx")' class="bg-red-600 hover:bg-red-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Export All Displayed Images (${globalShopifyRows.length} total across ${displayItems.length} products) for Shopify (Excel)</button>`;
     } else {
         exportContainer.innerHTML = '';
     }
 
     if (displayItems.length === 0) {
-        container.innerHTML = '<div class="text-slate-400 text-sm italic py-8 text-center">No matching catalog items found or selected.</div>';
+        container.innerHTML = '<div class="text-slate-400 text-sm italic">No matching catalog items found or selected.</div>';
         return;
     }
 
@@ -121,48 +105,49 @@ function renderInspector() {
         let allSelected = items.length > 0 && items.every(i => selectedImageIds.has(i.id));
 
         const section = document.createElement('div');
-        section.className = 'bg-slate-900 border border-slate-800 rounded-lg p-6 space-y-4 shadow-md';
+        section.className = 'bg-slate-900 border border-slate-800 rounded-lg p-6 space-y-4';
         section.innerHTML = `
             <div class="flex justify-between items-center">
                 <div class="flex items-center gap-4">
                     <label class="flex items-center gap-2 text-xs font-semibold cursor-pointer text-slate-300">
-                        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="togglePartition('${itemCode}', this.checked)" class="cursor-pointer w-4 h-4 rounded"> Select Partition
+                        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="togglePartition('${itemCode}', this.checked)" class="cursor-pointer"> Select Partition
                     </label>
-                    <h3 class="font-bold text-base text-blue-400 font-mono">Product Partition: ${itemCode}</h3>
+                    <h3 class="font-bold text-base text-blue-400">Product Partition: ${itemCode}</h3>
                 </div>
                 <button onclick="removeProduct('${itemCode}')" class="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-3 py-1 rounded text-xs font-bold transition cursor-pointer">🗑️ Remove Product</button>
             </div>
-            <div class="grid grid-cols-4 gap-4 text-xs text-slate-400 bg-slate-950/40 p-3 rounded">
+            <div class="grid grid-cols-4 gap-4 text-xs text-slate-400">
                 <div>Root Code: <span class="text-white font-mono">${info.root}</span></div>
                 <div>Division: <span class="text-white">${info.division}</span></div>
-                <div>Status: <span class="${items.length > 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'}">${items.length > 0 ? '🟢 Active' : '🔴 Missing'}</span></div>
-                <div>Images Active: <span class="text-white font-semibold">${items.length}</span></div>
+                <div>Status: <span class="${items.length > 0 ? 'text-emerald-400' : 'text-rose-400'}">${items.length > 0 ? '🟢 Active' : '🔴 Missing'}</span></div>
+                <div>Images Active: <span class="text-white">${items.length}</span></div>
             </div>
             <hr class="border-slate-800">
             <div class="grid-container" id="grid_${itemCode}">
                 ${items.map((item, idx) => `
-                    <div class="card bg-white text-slate-900 border border-slate-200 rounded-lg p-3 shadow relative flex flex-col items-center select-none cursor-grab active:cursor-grabbing transition transform hover:-translate-y-0.5 ${selectedImageIds.has(item.id) ? 'ring-2 ring-blue-500 bg-blue-50/50' : ''}" data-id="${item.id}">
-                        <input type="checkbox" class="absolute top-2.5 left-2.5 cursor-pointer z-10 w-4 h-4" ${selectedImageIds.has(item.id) ? 'checked' : ''} onclick="toggleSelect('${item.id}')">
-                        <span class="absolute top-2 left-9 bg-black/80 text-white text-[10px] px-2 py-0.5 rounded font-mono pos-badge">Pos ${idx + 1}</span>
+                    <div class="card ${selectedImageIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
+                        <input type="checkbox" class="absolute top-2 left-2 cursor-pointer z-10" ${selectedImageIds.has(item.id) ? 'checked' : ''} onclick="toggleSelect('${item.id}')">
+                        <span class="absolute top-2 left-10 bg-black/70 text-[10px] px-2 py-0.5 rounded font-mono pos-badge">Pos ${idx + 1}</span>
                         <button onclick="removeCard('${item.id}')" class="absolute top-2 right-2 bg-rose-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold hover:scale-110 transition cursor-pointer z-10" title="Remove image">✕</button>
-                        <img src="${item.url}" alt="${item.label}" class="w-full h-36 object-contain rounded mt-4 pointer-events-none">
-                        <div class="mt-2 text-xs font-semibold text-center text-slate-800">${item.label}</div>
-                        <a href="${item.url}" target="_blank" class="text-[11px] text-blue-600 mt-1 hover:underline font-medium" onclick="event.stopPropagation()">🔗 Direct URL</a>
+                        <img src="${item.url}" alt="${item.label}">
+                        <div class="mt-2 text-xs font-bold text-center">${item.label}</div>
+                        <a href="${item.url}" target="_blank" class="text-[10px] text-blue-400 mt-1 hover:underline" onclick="event.stopPropagation()">🔗 Direct URL</a>
                     </div>
                 `).join('')}
             </div>
-            ${items.length > 0 ? `<button onclick="downloadSinglePartition('${itemCode}')" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3 py-1.5 rounded text-xs cursor-pointer transition">📥 Download Shopify Excel for \`${itemCode}\` (${items.length} images)</button>` : ''}
+            ${items.length > 0 ? `<button onclick="downloadSinglePartition('${itemCode}')" class="bg-slate-800 hover:bg-slate-700 font-bold px-3 py-1.5 rounded text-xs cursor-pointer">📥 Download Shopify Excel for \`${itemCode}\` (${items.length} images)</button>` : ''}
         `;
         container.appendChild(section);
 
-        // --- SORTABLEJS DRAG-AND-DROP REORDER BINDING ---
+        // --- RESTORED SORTABLEJS DRAG-AND-DROP INITIALIZATION ---
         if (items.length > 0) {
             const gridEl = document.getElementById(`grid_${itemCode}`);
             new Sortable(gridEl, {
                 animation: 150,
                 ghostClass: 'opacity-30',
-                dragClass: 'scale-105 shadow-2xl',
+                dragClass: 'scale-105',
                 onEnd: function() {
+                    // Update position badges dynamically on drag completion
                     const children = gridEl.children;
                     for (let i = 0; i < children.length; i++) {
                         const badge = children[i].querySelector('.pos-badge');
@@ -190,10 +175,11 @@ function toggleSelect(id) {
     else selectedImageIds.add(id);
     updatePopoutBar();
     
+    // Toggle card visual selection state immediately without full re-render
     const cardEl = document.querySelector(`.card[data-id="${id}"]`);
     if (cardEl) {
-        if (selectedImageIds.has(id)) cardEl.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50/50');
-        else cardEl.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50/50');
+        if (selectedImageIds.has(id)) cardEl.classList.add('selected');
+        else cardEl.classList.remove('selected');
     }
 }
 
@@ -232,7 +218,7 @@ async function downloadMasterReport() {
     const response = await fetch('/api/download-master-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ brand: globalData.brand, van_url_map: globalData.van_url_map, valid_url_map: globalData.valid_url_map })
+        body: JSON.stringify({ van_url_map: globalData.van_url_map, valid_url_map: globalData.valid_url_map })
     });
     triggerDownload(await response.blob(), 'Cloudinary_Verified_Master.xlsx');
 }
