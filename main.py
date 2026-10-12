@@ -27,13 +27,18 @@ HEADERS = {
 
 async def check_url(session, semaphore, url, timeout):
     async with semaphore:
-        try:
-            async with session.head(url, timeout=timeout, allow_redirects=True) as resp:
-                if resp.status == 200 and 'x-cld-error' not in resp.headers:
-                    return url, True
-                return url, False
-        except Exception:
-            return url, False
+        t = aiohttp.ClientTimeout(total=timeout)
+        # Try twice so a single dropped connection isn't reported as "missing"
+        for _ in range(2):
+            try:
+                async with session.head(url, timeout=t, allow_redirects=True) as resp:
+                    if resp.status == 200 and 'x-cld-error' not in resp.headers:
+                        return url, True
+                    if resp.status == 404:
+                        return url, False
+            except Exception:
+                continue
+        return url, False
 
 async def validate_urls(url_list, max_concurrent, timeout):
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -50,10 +55,10 @@ async def validate_urls(url_list, max_concurrent, timeout):
 async def verify_catalog(
     brand: str = Form("vans"),
     file: UploadFile = File(...),
-    base_cdn_url: str = Form("https://assets.timberland.com/images/t_img/f_auto/"),
+    base_cdn_url: str = Form("https://assets.timberland.com/"),
     preset: str = Form(""),
-    max_concurrent: int = Form(400),
-    timeout: int = Form(5)
+    max_concurrent: int = Form(50),
+    timeout: int = Form(15)
 ):
     contents = await file.read()
     file_name = file.filename.lower()
