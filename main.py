@@ -23,7 +23,7 @@ HEADERS = {
 }
 
 # ==============================================================================
-# 1. SUFFIX SPECTRUM DEFINITIONS (Exact match to your script)
+# SUFFIX SPECTRUM DEFINITIONS
 # ==============================================================================
 FOOTWEAR_SUFFIXES = [("-HERO", "Hero View")] + \
                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
@@ -44,7 +44,7 @@ ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(
 ))
 
 # ==============================================================================
-# 2. ASYNC PROBER ENGINE
+# ASYNC PROBER ENGINE
 # ==============================================================================
 async def check_url(session, semaphore, url, timeout):
     async with semaphore:
@@ -60,7 +60,6 @@ async def validate_urls(url_list, max_concurrent, timeout):
     semaphore = asyncio.Semaphore(max_concurrent)
     connector = aiohttp.TCPConnector(limit=max_concurrent, ttl_dns_cache=600, ssl=False)
     results = {}
-
     async with aiohttp.ClientSession(connector=connector, headers=HEADERS) as session:
         tasks = [check_url(session, semaphore, url, timeout) for url in url_list]
         for future in asyncio.as_completed(tasks):
@@ -69,7 +68,7 @@ async def validate_urls(url_list, max_concurrent, timeout):
     return results
 
 # ==============================================================================
-# 3. EXCEL REPORT GENERATORS
+# EXCEL GENERATORS
 # ==============================================================================
 def create_excel_report(van_url_map, valid_url_map):
     rows = []
@@ -107,7 +106,7 @@ def create_shopify_excel_report(shopify_export_rows):
     return output_buffer.getvalue()
 
 # ==============================================================================
-# 4. API ENDPOINTS FOR SAAS
+# API ENDPOINTS
 # ==============================================================================
 @app.post("/api/verify-catalog")
 async def verify_catalog(
@@ -166,7 +165,6 @@ async def verify_catalog(
     url_list = list(all_urls_to_check)
     valid_url_map = await validate_urls(url_list, max_concurrent, timeout)
     
-    # Bundle data into a structured JSON response for the frontend inspector UI
     return {
         "van_url_map": van_url_map,
         "valid_url_map": valid_url_map,
@@ -179,30 +177,15 @@ async def verify_catalog(
 
 @app.post("/api/download-master-report")
 async def download_master_report(payload: dict):
-    # Generates master Excel file from session state payload
-    van_url_map = payload.get("van_url_map", {})
-    valid_url_map = payload.get("valid_url_map", {})
-    excel_bytes = create_excel_report(van_url_map, valid_url_map)
-    return StreamingResponse(
-        io.BytesIO(excel_bytes),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=SAP_VAN_Cloudinary_Verified_Master.xlsx"}
-    )
+    excel_bytes = create_excel_report(payload.get("van_url_map", {}), payload.get("valid_url_map", {}))
+    return StreamingResponse(io.BytesIO(excel_bytes), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=SAP_VAN_Cloudinary_Verified_Master.xlsx"})
 
 @app.post("/api/download-shopify-report")
 async def download_shopify_report(payload: dict):
-    # Generates Shopify-formatted image import Excel
-    rows = payload.get("rows", [])
-    excel_bytes = create_shopify_excel_report(rows)
-    return StreamingResponse(
-        io.BytesIO(excel_bytes),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=Shopify_Image_Import.xlsx"}
-    )
+    excel_bytes = create_shopify_excel_report(payload.get("rows", []))
+    return StreamingResponse(io.BytesIO(excel_bytes), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=Shopify_Image_Import.xlsx"})
 
-# ==============================================================================
-# 5. SERVE STATIC FRONTEND
-# ==============================================================================
+# Static mount
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
