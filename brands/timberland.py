@@ -24,9 +24,6 @@ def parse_timberland_catalog(df, base_cdn_url, preset):
             continue
             
         division = str(row.get('DIVISION', 'FOOTWEAR')).upper()
-        season = str(row.get('SEASON', 'f23')).lower() # Fallback season folder if needed
-        
-        # Select suffix spectrum based on division
         active_suffixes = TIMBERLAND_FOOTWEAR_SUFFIXES if 'FOOTWEAR' in division else TIMBERLAND_APPAREL_SUFFIXES
         
         sku_url_map[sku] = {
@@ -36,7 +33,7 @@ def parse_timberland_catalog(df, base_cdn_url, preset):
         }
         
         for suffix, label in active_suffixes:
-            # Matches pattern: base_url + season + sku + suffix (.jpg is appended in prober or handled)
+            # Format matches Timberland's Cloudinary pattern
             url = f"{base_cdn_url}{preset_prefix}{sku}{suffix}.jpg"
             sku_url_map[sku]['urls'][suffix] = url
             all_urls_to_check.add(url)
