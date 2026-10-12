@@ -10,12 +10,9 @@ import re
 
 DEFAULT_BASE = "https://assets.timberland.com/"
 
-# Old default that main.py sends for Timberland. It was never tested with the
-# short pattern, so we swap it for the verified base above.
-LEGACY_BASES = {
-    "https://assets.timberland.com/images/t_img/f_auto/",
-    "https://assets.timberland.com/images/t_img/f_auto",
-}
+# The front-end form pre-fills the base URL and preset with the Vans values, so
+# Timberland ignores them by default. Set to True only if you want to override.
+USE_FRONTEND_VALUES = False
 
 # Angles to try. Confirmed so far: HERO, ALT2, ALT3, ALT4, ALTA.
 # Extra ones are guesses; remove any that never return an image to cut requests.
@@ -53,13 +50,14 @@ def clean_vendor_code(raw):
 
 
 def scrape_timberland_catalog(df, base_cdn_url, preset):
-    base = (base_cdn_url or "").strip()
-    if not base or base in LEGACY_BASES:
+    if USE_FRONTEND_VALUES:
+        base = (base_cdn_url or "").strip() or DEFAULT_BASE
+        preset_prefix = f"{preset.strip()}/" if preset and preset.strip() else ""
+    else:
         base = DEFAULT_BASE
+        preset_prefix = ""
     if not base.endswith("/"):
         base += "/"
-
-    preset_prefix = f"{preset.strip()}/" if preset and preset.strip() else ""
 
     df_unique = df.drop_duplicates(subset=["VENDOR ARTICLE NO."]).copy()
 
