@@ -69,7 +69,6 @@ async def verify_catalog(
     if brand_lower == "vans":
         item_url_map, all_urls, unique_suffixes = parse_vans_catalog(df, base_cdn_url, preset)
     elif brand_lower == "timberland":
-        # Uses Selenium scraper to extract actual Cloudinary links from Timberland search results
         item_url_map, all_urls, unique_suffixes = scrape_timberland_catalog(df, base_cdn_url, preset)
     else:
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
