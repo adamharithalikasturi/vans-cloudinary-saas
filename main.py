@@ -1,4 +1,3 @@
-# main.py
 import asyncio
 import io
 import os
@@ -10,8 +9,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
-from brands.timberland import scrape_timberland_catalog, ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES
-from brands.columbia import parse_columbia_catalog, ALL_UNIQUE_SUFFIXES as COLUMBIA_SUFFIXES
+from brands.timberland import scrape_timberland_catalog, ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES, PROBE_SUFFIX as TIMBERLAND_PROBE
 
 app = FastAPI(title="Multi-Brand Enterprise Cloudinary SaaS API")
 
@@ -30,15 +28,18 @@ HEADERS = {
 async def check_url(session, semaphore, url, timeout):
     async with semaphore:
         t = aiohttp.ClientTimeout(total=timeout)
-        for _ in range(2):
+        for attempt in range(3):
             try:
                 async with session.head(url, timeout=t, allow_redirects=True) as resp:
                     if resp.status == 200 and 'x-cld-error' not in resp.headers:
-                        return url, True
-                    if resp.status == 404:
+                        ctype = resp.headers.get('Content-Type', 'image').lower()
+                        return url, ctype.startswith('image')
+                    if resp.status in (404, 410):
                         return url, False
+                    # 403 / 429 / 5xx: probably throttling, wait and retry
             except Exception:
-                continue
+                pass
+            await asyncio.sleep(0.5 * (attempt + 1))
         return url, False
 
 async def validate_urls(url_list, max_concurrent, timeout):
@@ -56,35 +57,47 @@ async def validate_urls(url_list, max_concurrent, timeout):
 async def verify_catalog(
     brand: str = Form("vans"),
     file: UploadFile = File(...),
-    base_cdn_url: str = Form("https://img.vans.com/image/upload/"),
+    base_cdn_url: str = Form("https://assets.timberland.com/"),
     preset: str = Form(""),
-    max_concurrent: int = Form(100),
-    timeout: int = Form(5)
+    max_concurrent: int = Form(50),
+    timeout: int = Form(15)
 ):
     contents = await file.read()
     file_name = file.filename.lower()
     
-    try:
-        if file_name.endswith('.csv'):
-            df = pd.read_csv(io.BytesIO(contents), low_memory=False)
-        elif file_name.endswith(('.xlsx', '.xls')):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file format.")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error parsing file: {str(e)}")
+    if file_name.endswith('.csv'):
+        df = pd.read_csv(io.BytesIO(contents), low_memory=False)
+    elif file_name.endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(io.BytesIO(contents))
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported file format.")
 
     brand_lower = brand.lower().strip()
     if brand_lower == "vans":
         item_url_map, all_urls, unique_suffixes = parse_vans_catalog(df, base_cdn_url, preset)
     elif brand_lower == "timberland":
         item_url_map, all_urls, unique_suffixes = scrape_timberland_catalog(df, base_cdn_url, preset)
-    elif brand_lower == "columbia":
-        item_url_map, all_urls, unique_suffixes = parse_columbia_catalog(df, base_cdn_url, preset)
     else:
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
 
-    valid_url_map = await validate_urls(list(all_urls), max_concurrent, timeout)
+    probe = TIMBERLAND_PROBE if brand_lower == "timberland" else None
+    if probe:
+        # Stage 1: check only the hero image of each product
+        probe_urls = {d['urls'][probe] for d in item_url_map.values() if probe in d['urls']}
+        valid_url_map = await validate_urls(list(probe_urls), max_concurrent, timeout)
+
+        # Stage 2: check the other angles only for products that have a hero
+        rest = set()
+        for d in item_url_map.values():
+            if valid_url_map.get(d['urls'].get(probe), False):
+                rest.update(u for sfx, u in d['urls'].items() if sfx != probe)
+        rest -= set(valid_url_map)
+        valid_url_map.update(await validate_urls(list(rest), max_concurrent, timeout))
+
+        for u in all_urls:  # anything never checked counts as missing
+            valid_url_map.setdefault(u, False)
+    else:
+        valid_url_map = await validate_urls(list(all_urls), max_concurrent, timeout)
     
     return {
         "brand": brand_lower,
@@ -103,12 +116,7 @@ async def download_master_report(payload: dict):
     item_url_map = payload.get("van_url_map", {})
     valid_url_map = payload.get("valid_url_map", {})
     
-    if brand == "timberland":
-        active_suffixes = TIMBERLAND_SUFFIXES
-    elif brand == "columbia":
-        active_suffixes = COLUMBIA_SUFFIXES
-    else:
-        active_suffixes = VANS_SUFFIXES
+    active_suffixes = TIMBERLAND_SUFFIXES if brand == "timberland" else VANS_SUFFIXES
     
     rows = []
     for item_code, data in item_url_map.items():
@@ -139,19 +147,6 @@ async def download_master_report(payload: dict):
         output_buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=Cloudinary_Verified_Master.xlsx"}
-    )
-
-@app.post("/api/download-shopify-report")
-async def download_shopify_report(payload: dict):
-    df_shopify = pd.DataFrame(payload.get("rows", []))
-    output_buffer = io.BytesIO()
-    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-        df_shopify.to_excel(writer, sheet_name="Shopify Image Import", index=False)
-    output_buffer.seek(0)
-    return StreamingResponse(
-        output_buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=Shopify_Image_Import.xlsx"}
     )
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
