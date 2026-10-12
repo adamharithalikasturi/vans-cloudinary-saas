@@ -4,3 +4,6 @@ pandas
 openpyxl
 aiohttp
 python-multipart
+selenium
+webdriver-manager
+beautifulsoup4
