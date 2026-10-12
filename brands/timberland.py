@@ -10,23 +10,33 @@ import re
 
 DEFAULT_BASE = "https://assets.timberland.com/"
 
-# The front-end form pre-fills the base URL and preset with the Vans values, so
-# Timberland ignores them by default. Set to True only if you want to override.
+# Controls whether frontend-provided base URL and preset are honored or ignored
 USE_FRONTEND_VALUES = False
 
-# Angles to try. Confirmed so far: HERO, ALT2, ALT3, ALT4, ALTA.
-# Extra ones are guesses; remove any that never return an image to cut requests.
-SUFFIXES = (
-    ["-HERO"]
-    + [f"-ALT{i}" for i in range(1, 11)]          # ALT1 .. ALT10
-    + [f"-ALT{c}" for c in "ABCDEFGH"]            # ALTA .. ALTH
-)
+# Original Suffixes + Expanded Category Suffixes combined so nothing is omitted
+FOOTWEAR_SUFFIXES = [("-HERO", "Hero View")] + \
+                    [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                    [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
+                    [(f"-ALT{c}", f"Alt {c}") for c in "ABCDEFGH"]
 
-ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(SUFFIXES))
+APPAREL_SUFFIXES = [("-HERO", "Hero View")] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(60, 76)] + \
+                   [(f"-ALT{c}", f"Alt {c}") for c in "ABCDEFGH"]
+
+ACCESSORY_SUFFIXES = [("-HERO", "Hero View")] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 11)] + \
+                     [(f"-ALT{c}", f"Alt {c}") for c in "ABCDEFGH"]
+
+ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(
+    [s[0] for s in FOOTWEAR_SUFFIXES + APPAREL_SUFFIXES + ACCESSORY_SUFFIXES]
+))
 
 # A clean Timberland vendor number: TB + 10 letters/digits (12 chars total)
 CODE_RE = re.compile(r"^TB[0-9A-Z]{10}$")
-
 
 def clean_vendor_code(raw):
     """Return a clean 12-char code like TB0A2DHJ0151, or None if it isn't a real product."""
@@ -56,11 +66,11 @@ def scrape_timberland_catalog(df, base_cdn_url, preset):
     else:
         base = DEFAULT_BASE
         preset_prefix = ""
+        
     if not base.endswith("/"):
         base += "/"
 
     df_unique = df.drop_duplicates(subset=["VENDOR ARTICLE NO."]).copy()
-
     item_url_map = {}
     all_urls_to_check = set()
 
@@ -77,13 +87,23 @@ def scrape_timberland_catalog(df, base_cdn_url, preset):
         if division in ("", "#", "NAN"):
             division = "FOOTWEAR"
 
+        silhouette = str(row.get("AH1 SILLOUTE", row.get("CATEGORY", ""))).upper().strip()
+
+        # Division & category-aware suffix routing (keeping original logic intact)
+        if 'FOOTWEAR' in division or 'SHOES' in silhouette:
+            active_suffixes = [s[0] for s in FOOTWEAR_SUFFIXES]
+        elif 'APPAREL' in division or silhouette in ['TOPS', 'BOTTOMS', 'SWEATSHIR', 'COMPLETES']:
+            active_suffixes = [s[0] for s in APPAREL_SUFFIXES]
+        else:
+            active_suffixes = [s[0] for s in ACCESSORY_SUFFIXES]
+
         item_url_map[code] = {
             "root": root,
             "division": division,
             "urls": {},
         }
 
-        for suffix in SUFFIXES:
+        for suffix in active_suffixes:
             url = f"{base}{preset_prefix}{root}{suffix}"
             item_url_map[code]["urls"][suffix] = url
             all_urls_to_check.add(url)
