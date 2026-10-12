@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
-from brands.timberland import parse_timberland_catalog
+from brands.timberland import parse_timberland_catalog, ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES
 
 app = FastAPI(title="Multi-Brand Enterprise Cloudinary SaaS API")
 
@@ -50,7 +50,7 @@ async def validate_urls(url_list, max_concurrent, timeout):
 async def verify_catalog(
     brand: str = Form("vans"),
     file: UploadFile = File(...),
-    base_cdn_url: str = Form("https://img.vans.com/image/upload/"),
+    base_cdn_url: str = Form("https://assets.timberland.com/images/t_img/f_auto/"),
     preset: str = Form(""),
     max_concurrent: int = Form(400),
     timeout: int = Form(5)
@@ -65,9 +65,10 @@ async def verify_catalog(
     else:
         raise HTTPException(status_code=400, detail="Unsupported file format.")
 
-    if brand == "vans":
+    brand_lower = brand.lower().strip()
+    if brand_lower == "vans":
         item_url_map, all_urls, unique_suffixes = parse_vans_catalog(df, base_cdn_url, preset)
-    elif brand == "timberland":
+    elif brand_lower == "timberland":
         item_url_map, all_urls, unique_suffixes = parse_timberland_catalog(df, base_cdn_url, preset)
     else:
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
@@ -75,7 +76,7 @@ async def verify_catalog(
     valid_url_map = await validate_urls(list(all_urls), max_concurrent, timeout)
     
     return {
-        "brand": brand,
+        "brand": brand_lower,
         "van_url_map": item_url_map,
         "valid_url_map": valid_url_map,
         "summary": {
@@ -87,20 +88,23 @@ async def verify_catalog(
 
 @app.post("/api/download-master-report")
 async def download_master_report(payload: dict):
-    van_url_map = payload.get("van_url_map", {})
+    brand = payload.get("brand", "vans").lower()
+    item_url_map = payload.get("van_url_map", {})
     valid_url_map = payload.get("valid_url_map", {})
     
+    active_suffixes = TIMBERLAND_SUFFIXES if brand == "timberland" else VANS_SUFFIXES
+    
     rows = []
-    for van, data in van_url_map.items():
+    for item_code, data in item_url_map.items():
         valid_count = sum(1 for u in data['urls'].values() if valid_url_map.get(u, False))
         row_data = {
-            "Item Code": van,
+            "Item Code": item_code,
             "Root Code": data['root'],
             "Division": data['division'],
             "Status": "Active" if valid_count > 0 else "Missing",
             "Available Images": valid_count
         }
-        for suffix in VANS_SUFFIXES:
+        for suffix in active_suffixes:
             header_title = "Hero View" if suffix == "-HERO" else f"Alt {suffix.replace('-ALT', '')}"
             if suffix in data['urls']:
                 url = data['urls'][suffix]
