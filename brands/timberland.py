@@ -1,13 +1,21 @@
 # brands/timberland.py
 
-TIMBERLAND_FOOTWEAR_SUFFIXES = [("-HERO", "Hero View")] + \
-                               [(f"-ALT{i}", f"Alt {i}") for i in range(1, 11)]
+FOOTWEAR_SUFFIXES = [("-HERO", "Hero View")] + \
+                    [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                    [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)]
 
-TIMBERLAND_APPAREL_SUFFIXES  = [("-HERO", "Hero View")] + \
-                               [(f"-ALT{i}", f"Alt {i}") for i in range(1, 11)]
+APPAREL_SUFFIXES = [("-HERO", "Hero View")] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
+                   [(f"-ALT{i}", f"Alt {i}") for i in range(60, 76)]
+
+ACCESSORY_SUFFIXES = [("-HERO", "Hero View")] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 16)] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(40, 56)] + \
+                     [(f"-ALT{i}", f"Alt {i}") for i in range(1, 11)]
 
 ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(
-    [s[0] for s in TIMBERLAND_FOOTWEAR_SUFFIXES + TIMBERLAND_APPAREL_SUFFIXES]
+    [s[0] for s in FOOTWEAR_SUFFIXES + APPAREL_SUFFIXES + ACCESSORY_SUFFIXES]
 ))
 
 def parse_timberland_catalog(df, base_cdn_url, preset):
@@ -24,17 +32,26 @@ def parse_timberland_catalog(df, base_cdn_url, preset):
             continue
             
         division = str(row.get('DIVISION', 'FOOTWEAR')).upper()
-        active_suffixes = TIMBERLAND_FOOTWEAR_SUFFIXES if 'FOOTWEAR' in division else TIMBERLAND_APPAREL_SUFFIXES
+        silhouette = str(row.get('AH1 SILLOUTE', '')).upper()
         
+        # Optional root cleanup if Timberland style numbers follow a similar trim pattern
+        root_sku = sku
+
+        if 'FOOTWEAR' in division or 'SHOES' in silhouette:
+            active_suffixes = [s[0] for s in FOOTWEAR_SUFFIXES]
+        elif 'APPAREL' in division or silhouette in ['TOPS', 'BOTTOMS']:
+            active_suffixes = [s[0] for s in APPAREL_SUFFIXES]
+        else:
+            active_suffixes = [s[0] for s in ACCESSORY_SUFFIXES]
+            
         sku_url_map[sku] = {
-            'root': sku,
-            'division': division,
+            'root': root_sku,
+            'division': division if division != '#' else 'FOOTWEAR',
             'urls': {}
         }
         
-        for suffix, label in active_suffixes:
-            # Format matches Timberland's Cloudinary pattern
-            url = f"{base_cdn_url}{preset_prefix}{sku}{suffix}.jpg"
+        for suffix in active_suffixes:
+            url = f"{base_cdn_url}{preset_prefix}{root_sku}{suffix}.jpg"
             sku_url_map[sku]['urls'][suffix] = url
             all_urls_to_check.add(url)
 
