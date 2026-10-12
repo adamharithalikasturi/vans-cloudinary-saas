@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
-from brands.timberland import parse_timberland_catalog, ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES
+from brands.timberland import scrape_timberland_catalog, ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES
 
 app = FastAPI(title="Multi-Brand Enterprise Cloudinary SaaS API")
 
@@ -69,7 +69,8 @@ async def verify_catalog(
     if brand_lower == "vans":
         item_url_map, all_urls, unique_suffixes = parse_vans_catalog(df, base_cdn_url, preset)
     elif brand_lower == "timberland":
-        item_url_map, all_urls, unique_suffixes = parse_timberland_catalog(df, base_cdn_url, preset)
+        # Uses Selenium scraper to extract actual Cloudinary links from Timberland search results
+        item_url_map, all_urls, unique_suffixes = scrape_timberland_catalog(df, base_cdn_url, preset)
     else:
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
 
@@ -123,19 +124,6 @@ async def download_master_report(payload: dict):
         output_buffer,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=Cloudinary_Verified_Master.xlsx"}
-    )
-
-@app.post("/api/download-shopify-report")
-async def download_shopify_report(payload: dict):
-    df_shopify = pd.DataFrame(payload.get("rows", []))
-    output_buffer = io.BytesIO()
-    with pd.ExcelWriter(output_buffer, engine='openpyxl') as writer:
-        df_shopify.to_excel(writer, sheet_name="Shopify Image Import", index=False)
-    output_buffer.seek(0)
-    return StreamingResponse(
-        output_buffer,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=Shopify_Image_Import.xlsx"}
     )
 
 static_dir = os.path.join(os.path.dirname(__file__), "static")
