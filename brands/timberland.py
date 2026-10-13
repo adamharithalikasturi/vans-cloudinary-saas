@@ -16,7 +16,17 @@ USE_FRONTEND_VALUES = False
 
 # Images ALT40 and above are not served by the US asset server. They live on the
 # Cloudinary delivery host below (same <ROOT>-ALT<n> naming, .jpg extension).
-HIGH_ALT_BASE = "https://image.timberland.com/image/upload/t_TBL-Japan-PDP-1000x1000px/"
+# Other markets' image servers (Taiwan, Japan, Korea...). Used automatically for
+# products with NO imagery on the main servers. Add one entry per market once its
+# image URL pattern is confirmed, for example:
+#   {"key": "TW", "name": "Taiwan",
+#    "template": "https://<host>/<path>/{root}{suffix}.jpg",
+#    "suffixes": ["-HERO", "-ALT1", "-ALT2", "-ALT3", "-ALT4"]}
+# {root} = 11-char image root, {suffix} = one of the suffixes. The first suffix is
+# checked first; the rest are only checked if it exists.
+REGIONAL_SOURCES = []
+
+HIGH_ALT_BASE = "https://image.timberland.com/image/upload/"
 HIGH_ALT_START = 40
 HIGH_ALT_END = 55
 HIGH_ALT_EXT = ".jpg"
@@ -49,11 +59,12 @@ def _url(base, prefix, root, suffix):
 
 # Clean vendor number: TB + 10 letters/digits (12 characters)
 CODE_RE = re.compile(r"^TB[0-9A-Z]{10}$")
+ROOT_RE = re.compile(r"^TB[0-9A-Z]{9}$")      # 11 chars: already the image root
 
 
 def clean_vendor_code(raw):
     """Return a clean 12-char code like TB0A2DHJ0151, or None if not a real product."""
-    code = str(raw).strip().upper().replace(" ", "")
+    code = str(raw).strip().upper().replace(" ", "").split("-")[0]   # drop size suffix (TB0A2A8H662-680)
     if code in ("", "NAN", "#", "NOTASSIGNED", "NONE"):
         return None
 
@@ -69,6 +80,8 @@ def clean_vendor_code(raw):
     if len(code) == 10 and code[0] == "0":
         code = "TB" + code
 
+    if ROOT_RE.match(code):
+        return code          # root supplied directly; treated as its own item code
     return code if CODE_RE.match(code) else None
 
 
@@ -77,7 +90,7 @@ def _division(row):
         val = str(row.get(col, "")).upper().strip()
         if val not in ("", "#", "NAN"):
             return val
-    return "FOOTWEAR"
+    return "Not specified"
 
 
 def scrape_timberland_catalog(df, base_cdn_url, preset):
@@ -100,7 +113,7 @@ def scrape_timberland_catalog(df, base_cdn_url, preset):
         if not code or code in item_url_map:
             continue
 
-        root = code[:-1]
+        root = code if ROOT_RE.match(code) else code[:-1]
         urls = {s: _url(base, prefix, root, s) for s in SUFFIXES}
         item_url_map[code] = {"root": root, "division": _division(row), "urls": urls}
         all_urls.update(urls.values())
