@@ -14,9 +14,12 @@ DEFAULT_BASE = "https://assets.timberland.com/"
 # Set to True only if you want the form values to override.
 USE_FRONTEND_VALUES = False
 
-# main.py checks this angle first and only checks the others for products
-# where it exists. This cuts the number of requests by roughly 70-90%.
-PROBE_SUFFIX = "-HERO"
+# Images ALT40 and above are not served by the US asset server. They live on the
+# Cloudinary delivery host below (same <ROOT>-ALT<n> naming, .jpg extension).
+HIGH_ALT_BASE = "https://image.timberland.com/image/upload/t_TBL-Japan-PDP-1000x1000px/"
+HIGH_ALT_START = 40
+HIGH_ALT_END = 55
+HIGH_ALT_EXT = ".jpg"
 
 # Confirmed: HERO, ALT2, ALT3, ALT4, ALTA. The rest are guesses.
 # After a big run, delete any angle that never returns an image.
@@ -26,7 +29,23 @@ SUFFIXES = (
     + [f"-ALT{c}" for c in "ABCDEFGH"]     # ALTA .. ALTH
 )
 
+HIGH_SUFFIXES = [f"-ALT{i}" for i in range(HIGH_ALT_START, HIGH_ALT_END + 1)]
+SUFFIXES = SUFFIXES + HIGH_SUFFIXES
+
 ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(SUFFIXES))
+
+# main.py checks one "probe" angle per group first and only checks the rest of
+# that group for products where the probe exists. Cuts requests by 70-90%.
+PROBE_GROUPS = [
+    ("-HERO", [s for s in SUFFIXES if s not in HIGH_SUFFIXES and s != "-HERO"]),
+    (f"-ALT{HIGH_ALT_START}", [s for s in HIGH_SUFFIXES if s != f"-ALT{HIGH_ALT_START}"]),
+]
+
+
+def _url(base, prefix, root, suffix):
+    if suffix in HIGH_SUFFIXES:
+        return f"{HIGH_ALT_BASE}{root}{suffix}{HIGH_ALT_EXT}"
+    return f"{base}{prefix}{root}{suffix}"
 
 # Clean vendor number: TB + 10 letters/digits (12 characters)
 CODE_RE = re.compile(r"^TB[0-9A-Z]{10}$")
@@ -82,7 +101,7 @@ def scrape_timberland_catalog(df, base_cdn_url, preset):
             continue
 
         root = code[:-1]
-        urls = {s: f"{base}{prefix}{root}{s}" for s in SUFFIXES}
+        urls = {s: _url(base, prefix, root, s) for s in SUFFIXES}
         item_url_map[code] = {"root": root, "division": _division(row), "urls": urls}
         all_urls.update(urls.values())
 
