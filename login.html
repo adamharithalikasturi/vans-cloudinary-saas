@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in | Asset Intelligence</title>
+    <meta name="robots" content="noindex">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f172a'/%3E%3Cpath d='M9 21l5-10 4 7 2-4 3 7z' fill='%2360a5fa'/%3E%3C/svg%3E">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        (function(){var t;try{t=localStorage.getItem('theme')}catch(e){}
+        if(!t)t=window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+        document.documentElement.setAttribute('data-theme',t)})();
+    </script>
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="auth-body">
+    <main class="auth-wrap">
+        <div class="auth-card">
+            <div class="auth-brand">
+                <svg viewBox="0 0 32 32" width="36" height="36" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1e293b"/><path d="M9 21l5-10 4 7 2-4 3 7z" fill="#60a5fa"/></svg>
+                <div><strong>Asset Intelligence</strong><span>Catalog Imagery Platform</span></div>
+            </div>
+            <h1>Sign in</h1>
+            <p class="muted">Access is provided by invitation. Use the credentials supplied to you.</p>
+            <form id="loginForm" novalidate>
+                <label class="field"><span>Email</span><input id="email" type="email" autocomplete="username" required autofocus></label>
+                <label class="field"><span>Password</span><input id="password" type="password" autocomplete="current-password" required></label>
+                <div id="authError" class="form-error hidden" role="alert"></div>
+                <button id="loginBtn" class="btn btn-primary btn-lg" type="submit">Sign in</button>
+            </form>
+            <p class="auth-foot">Need access? <a href="mailto:a.alikasturi@gmg.com?subject=Asset%20Intelligence%20Access%20Request">Contact us</a></p>
+        </div>
+        <p class="auth-copy">&copy; <span id="year">2026</span> Asset Intelligence. All rights reserved.</p>
+    </main>
+    <script>
+        document.getElementById('year').textContent = new Date().getFullYear();
+        const form = document.getElementById('loginForm'), err = document.getElementById('authError'), btn = document.getElementById('loginBtn');
+        form.addEventListener('submit', async e => {
+            e.preventDefault();
+            err.classList.add('hidden');
+            const email = document.getElementById('email').value.trim(), password = document.getElementById('password').value;
+            if (!email || !password) { err.textContent = 'Please enter your email and password.'; err.classList.remove('hidden'); return; }
+            btn.disabled = true; btn.textContent = 'Signing in...';
+            try {
+                const res = await fetch('/api/v1/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ email, password }) });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || 'Unable to sign in.');
+                window.location.href = '/';
+            } catch (ex) {
+                err.textContent = ex.message; err.classList.remove('hidden');
+                btn.disabled = false; btn.textContent = 'Sign in';
+            }
+        });
+    </script>
+</body>
+</html>
