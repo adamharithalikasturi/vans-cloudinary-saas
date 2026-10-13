@@ -1,277 +1,420 @@
-let globalData = null;
-let selectedImageIds = new Set();
-let excludedVans = new Set();
-let removedImageIds = new Set();
+(() => {
+'use strict';
 
-async function runVerification() {
-    const fileInput = document.getElementById('fileInput');
-    if (!fileInput.files[0]) { alert('Please upload a catalog file first.'); return; }
+const PAGE_SIZE = 20;
+const state = {
+    data: null,
+    fileName: '',
+    selected: new Set(),
+    removed: new Set(),
+    excluded: new Set(),
+    order: {},          // itemCode -> [suffix, ...] (user's custom ordering)
+    collapsed: new Set(),
+    visible: PAGE_SIZE,
+    file: null,
+    currentList: []
+};
 
-    const formData = new FormData();
-    formData.append('brand', document.getElementById('brandSelect').value);
-    formData.append('file', fileInput.files[0]);
-    formData.append('base_cdn_url', document.getElementById('baseCdn').value);
-    formData.append('preset', document.getElementById('preset').value);
-    formData.append('max_concurrent', document.getElementById('maxConcurrent').value);
-    formData.append('timeout', document.getElementById('timeout').value);
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n).toLocaleString();
 
-    document.getElementById('statusContainer').classList.remove('hidden');
-    document.getElementById('verifyBtn').disabled = true;
+/* ------------------------------------------------------------ views & toasts */
+function showView(name) {
+    ['setupView', 'loadingView', 'resultsView'].forEach(v => $(v).classList.toggle('hidden', v !== name));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function toast(msg, type = '', action = null, ms = 5000) {
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.innerHTML = `<span>${esc(msg)}</span>`;
+    if (action) {
+        const b = document.createElement('button');
+        b.textContent = action.label;
+        b.onclick = () => { action.fn(); el.remove(); };
+        el.appendChild(b);
+    }
+    $('toasts').appendChild(el);
+    setTimeout(() => el.remove(), ms);
+}
+
+/* ------------------------------------------------------------ upload handling */
+const dz = $('dropzone'), fileInput = $('fileInput');
+
+function setFile(file) {
+    if (!file) return;
+    if (!/\.(csv|xlsx|xls)$/i.test(file.name)) {
+        toast('Unsupported file type. Please upload a .csv or .xlsx file.', 'error');
+        return;
+    }
+    state.file = file;
+    $('fileName').textContent = file.name;
+    $('fileSize').textContent = file.size > 1048576 ? `${(file.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(file.size / 1024))} KB`;
+    $('fileChip').classList.remove('hidden');
+    dz.classList.add('hidden');
+    $('verifyBtn').disabled = false;
+}
+
+function clearFile() {
+    state.file = null;
+    fileInput.value = '';
+    $('fileChip').classList.add('hidden');
+    dz.classList.remove('hidden');
+    $('verifyBtn').disabled = true;
+}
+
+dz.addEventListener('click', () => fileInput.click());
+dz.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+dz.addEventListener('drop', e => setFile(e.dataTransfer.files[0]));
+fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+$('fileClear').addEventListener('click', clearFile);
+
+/* ------------------------------------------------------------ analysis */
+const LOADING_STEPS = [
+    'Reading catalog records',
+    'Matching products to imagery',
+    'Validating asset availability',
+    'Compiling coverage results'
+];
+let loadingTimer = null;
+
+function startLoading() {
+    let i = 0;
+    $('loadingText').textContent = LOADING_STEPS[0];
+    loadingTimer = setInterval(() => {
+        i = Math.min(i + 1, LOADING_STEPS.length - 1);
+        $('loadingText').textContent = LOADING_STEPS[i];
+    }, 4500);
+    showView('loadingView');
+}
+function stopLoading() { clearInterval(loadingTimer); }
+
+async function runAnalysis() {
+    if (!state.file) { toast('Please upload a catalog file first.', 'error'); return; }
+    const brand = document.querySelector('input[name="brand"]:checked').value;
+    const fd = new FormData();
+    fd.append('brand', brand);
+    fd.append('file', state.file);
+
+    $('verifyBtn').disabled = true;
+    startLoading();
 
     try {
-        const response = await fetch('/api/verify-catalog', { method: 'POST', body: formData });
-        if (!response.ok) throw new Error('Verification failed.');
-        
-        globalData = await response.json();
-        excludedVans.clear();
-        removedImageIds.clear();
-        selectedImageIds.clear();
-        
-        document.getElementById('mTotal').innerText = globalData.summary.total_items.toLocaleString();
-        document.getElementById('mActive').innerText = globalData.summary.active_items.toLocaleString();
-        document.getElementById('mMissing').innerText = (globalData.summary.total_items - globalData.summary.active_items).toLocaleString();
-        document.getElementById('mImages').innerText = globalData.summary.total_images_found.toLocaleString();
-
-        const divisions = [...new Set(Object.values(globalData.van_url_map).map(v => v.division))];
-        const divSelect = document.getElementById('divFilter');
-        divSelect.innerHTML = '<option value="All Divisions">All Divisions</option>' + divisions.map(d => `<option value="${d}">${d}</option>`).join('');
-
-        document.getElementById('statusContainer').classList.add('hidden');
-        document.getElementById('resultsArea').classList.remove('hidden');
-        renderInspector();
+        const res = await fetch('/api/v1/analyze', { method: 'POST', body: fd });
+        if (!res.ok) {
+            let msg = 'We could not process this file. Please try again.';
+            try { const j = await res.json(); if (j.detail) msg = j.detail; } catch (_) {}
+            throw new Error(msg);
+        }
+        state.data = await res.json();
+        state.fileName = state.file.name;
+        state.selected.clear(); state.removed.clear(); state.excluded.clear();
+        state.order = {}; state.collapsed.clear(); state.visible = PAGE_SIZE;
+        stopLoading();
+        populateResults(brand);
+        showView('resultsView');
     } catch (err) {
-        alert('Error processing file.');
-        document.getElementById('statusContainer').classList.add('hidden');
+        stopLoading();
+        showView('setupView');
+        toast(err.message || 'Something went wrong. Please try again.', 'error', null, 7000);
     } finally {
-        document.getElementById('verifyBtn').disabled = false;
+        $('verifyBtn').disabled = !state.file;
     }
 }
 
-function renderInspector() {
-    if (!globalData) return;
-    const searchVal = document.getElementById('searchInput').value.trim().toUpperCase();
-    const selectedDiv = document.getElementById('divFilter').value;
-    const statusFilter = document.getElementById('statusFilter').value;
+function populateResults(brand) {
+    const s = state.data.summary;
+    const missing = s.total_items - s.active_items;
+    const pct = s.total_items ? (s.active_items / s.total_items) * 100 : 0;
+    $('resultsBrand').textContent = brand.charAt(0).toUpperCase() + brand.slice(1);
+    $('resultsFile').textContent = state.fileName;
+    $('mTotal').textContent = fmt(s.total_items);
+    $('mActive').textContent = fmt(s.active_items);
+    $('mMissing').textContent = fmt(missing);
+    $('mImages').textContent = fmt(s.total_images_found);
+    $('coveragePct').textContent = `${pct.toFixed(1)}%`;
+    $('meterFill').style.width = '0';
+    requestAnimationFrame(() => requestAnimationFrame(() => { $('meterFill').style.width = `${pct}%`; }));
 
-    const container = document.getElementById('inspectorContainer');
-    container.innerHTML = '';
+    const divisions = [...new Set(Object.values(state.data.items).map(v => v.division))].sort();
+    $('divFilter').innerHTML = '<option value="All Divisions">All divisions</option>' + divisions.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('');
+    $('searchInput').value = '';
+    $('statusFilter').value = 'All Products';
+    updateSelectionBar();
+    renderInspector();
+}
 
-    let displayItems = [];
-    const searchTokens = searchVal ? searchVal.split(',').map(v => v.trim()).filter(Boolean) : [];
+/* ------------------------------------------------------------ data helpers */
+function labelFor(suffix) {
+    if (suffix === '-HERO') return 'Hero View';
+    if (suffix.startsWith('_')) return `View ${suffix}`;
+    return `Alt ${suffix.replace('-ALT', '')}`;
+}
 
-    for (let [itemCode, info] of Object.entries(globalData.van_url_map)) {
-        if (excludedVans.has(itemCode)) continue;
-        if (selectedDiv !== 'All Divisions' && info.division !== selectedDiv) continue;
-        
-        const hasActive = Object.values(info.urls).some(u => globalData.valid_url_map[u]);
-        if (statusFilter === 'Active Only' && !hasActive) continue;
-        if (statusFilter === 'Missing Only' && hasActive) continue;
-
-        if (searchTokens.length > 0 && !searchTokens.includes(itemCode)) continue;
-        displayItems.push(itemCode);
+function getActiveItems(code) {
+    const info = state.data.items[code];
+    let list = Object.entries(info.urls)
+        .filter(([sfx, url]) => state.data.available[url] && !state.removed.has(`${code}|${sfx}`))
+        .map(([sfx, url]) => ({ id: `${code}|${sfx}`, sfx, label: labelFor(sfx), url }));
+    const custom = state.order[code];
+    if (custom) {
+        const rank = new Map(custom.map((s, i) => [s, i]));
+        list.sort((a, b) => (rank.has(a.sfx) ? rank.get(a.sfx) : 1e6) - (rank.has(b.sfx) ? rank.get(b.sfx) : 1e6));
     }
+    return list;
+}
 
-    let globalShopifyRows = [];
-    displayItems.forEach(itemCode => {
-        let info = globalData.van_url_map[itemCode];
-        let items = getActiveItems(itemCode);
-        items.forEach((item, idx) => {
-            globalShopifyRows.push({
-                "Handle": itemCode.toLowerCase(),
-                "Item Code": itemCode,
-                "Image Position": idx + 1,
-                "Image Src": item.url,
-                "Image Alt Text": `${itemCode} - ${item.label}`,
-                "Division": info.division
-            });
-        });
+function hasAnyImage(code) {
+    return Object.values(state.data.items[code].urls).some(u => state.data.available[u]);
+}
+
+function filteredCodes() {
+    const tokens = $('searchInput').value.trim().toUpperCase().split(',').map(t => t.trim()).filter(Boolean);
+    const div = $('divFilter').value, status = $('statusFilter').value;
+    const out = [];
+    for (const [code, info] of Object.entries(state.data.items)) {
+        if (state.excluded.has(code)) continue;
+        if (div !== 'All Divisions' && info.division !== div) continue;
+        const active = hasAnyImage(code);
+        if (status === 'Active Only' && !active) continue;
+        if (status === 'Missing Only' && active) continue;
+        if (tokens.length && !tokens.some(t => code.includes(t))) continue;
+        out.push(code);
+    }
+    return out;
+}
+
+function buildRows(codes, onlySelected) {
+    const rows = [];
+    codes.forEach(code => {
+        const info = state.data.items[code];
+        let items = getActiveItems(code);
+        if (onlySelected) items = items.filter(i => state.selected.has(i.id));
+        items.forEach((item, idx) => rows.push({
+            'Handle': code.toLowerCase(),
+            'Item Code': code,
+            'Image Position': idx + 1,
+            'Image Src': item.url,
+            'Image Alt Text': `${code} - ${item.label}`,
+            'Division': info.division
+        }));
     });
+    return rows;
+}
 
-    const exportContainer = document.getElementById('globalExportContainer');
-    if (displayItems.length > 0 && globalShopifyRows.length > 0) {
-        exportContainer.innerHTML = `<button onclick='downloadShopifyBatch(${JSON.stringify(globalShopifyRows)}, "Shopify_All_Displayed_Images_Export.xlsx")' class="bg-red-600 hover:bg-red-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Export All Displayed Images (${globalShopifyRows.length} total across ${displayItems.length} products) for Shopify (Excel)</button>`;
-    } else {
-        exportContainer.innerHTML = '';
-    }
+/* ------------------------------------------------------------ rendering */
+const CHEVRON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 
-    if (displayItems.length === 0) {
-        container.innerHTML = '<div class="text-slate-400 text-sm italic">No matching catalog items found or selected.</div>';
-        return;
-    }
-
-    displayItems.forEach(itemCode => {
-        let info = globalData.van_url_map[itemCode];
-        let items = getActiveItems(itemCode);
-        let allSelected = items.length > 0 && items.every(i => selectedImageIds.has(i.id));
-
-        const section = document.createElement('div');
-        section.className = 'bg-slate-900 border border-slate-800 rounded-lg p-6 space-y-4';
-        section.innerHTML = `
-            <div class="flex justify-between items-center">
-                <div class="flex items-center gap-4">
-                    <label class="flex items-center gap-2 text-xs font-semibold cursor-pointer text-slate-300">
-                        <input type="checkbox" ${allSelected ? 'checked' : ''} onchange="togglePartition('${itemCode}', this.checked)" class="cursor-pointer"> Select Partition
-                    </label>
-                    <h3 class="font-bold text-base text-blue-400">Product Partition: ${itemCode}</h3>
-                </div>
-                <button onclick="removeProduct('${itemCode}')" class="bg-rose-600/20 text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-3 py-1 rounded text-xs font-bold transition cursor-pointer">🗑️ Remove Product</button>
+function productHTML(code) {
+    const info = state.data.items[code];
+    const items = getActiveItems(code);
+    const allSel = items.length > 0 && items.every(i => state.selected.has(i.id));
+    const collapsed = state.collapsed.has(code);
+    const c = esc(code);
+    return `
+    <article class="product ${collapsed ? 'collapsed' : ''}" data-code="${c}">
+        <div class="product-head">
+            <button class="toggle" data-action="toggle" aria-label="Expand or collapse">${CHEVRON}</button>
+            <input type="checkbox" data-action="partition" ${allSel ? 'checked' : ''} ${items.length ? '' : 'disabled'} aria-label="Select all images for ${c}">
+            <span class="p-title">${c}</span>
+            <span class="badge ${items.length ? 'ok' : 'bad'}">${items.length ? 'Active' : 'Missing'}</span>
+            <div class="p-meta">
+                <span>Root <b>${esc(info.root)}</b></span>
+                <span>Division <b>${esc(info.division)}</b></span>
+                <span>Images <b>${items.length}</b></span>
             </div>
-            <div class="grid grid-cols-4 gap-4 text-xs text-slate-400">
-                <div>Root Code: <span class="text-white font-mono">${info.root}</span></div>
-                <div>Division: <span class="text-white">${info.division}</span></div>
-                <div>Status: <span class="${items.length > 0 ? 'text-emerald-400' : 'text-rose-400'}">${items.length > 0 ? '🟢 Active' : '🔴 Missing'}</span></div>
-                <div>Images Active: <span class="text-white">${items.length}</span></div>
+            <div class="p-actions">
+                ${items.length ? `<button class="btn-quiet" data-action="export-one">Export</button>` : ''}
+                <button class="btn-danger-ghost" data-action="remove-product">Remove</button>
             </div>
-            <hr class="border-slate-800">
-            <div class="grid-container" id="grid_${itemCode}">
+        </div>
+        <div class="product-body">
+            ${items.length ? `<div class="grid-container" data-grid="${c}">
                 ${items.map((item, idx) => `
-                    <div class="card ${selectedImageIds.has(item.id) ? 'selected' : ''}" data-id="${item.id}">
-                        <input type="checkbox" class="absolute top-2 left-2 cursor-pointer z-10" ${selectedImageIds.has(item.id) ? 'checked' : ''} onclick="toggleSelect('${item.id}')">
-                        <span class="absolute top-2 left-10 bg-black/70 text-[10px] px-2 py-0.5 rounded font-mono pos-badge">Pos ${idx + 1}</span>
-                        <button onclick="removeCard('${item.id}')" class="absolute top-2 right-2 bg-rose-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold hover:scale-110 transition cursor-pointer z-10" title="Remove image">✕</button>
-                        <img src="${item.url}" alt="${item.label}">
-                        <div class="mt-2 text-xs font-bold text-center">${item.label}</div>
-                        <a href="${item.url}" target="_blank" class="text-[10px] text-blue-400 mt-1 hover:underline" onclick="event.stopPropagation()">🔗 Direct URL</a>
-                    </div>
-                `).join('')}
-            </div>
-            ${items.length > 0 ? `<button onclick="downloadSinglePartition('${itemCode}')" class="bg-slate-800 hover:bg-slate-700 font-bold px-3 py-1.5 rounded text-xs cursor-pointer">📥 Download Shopify Excel for \`${itemCode}\` (${items.length} images)</button>` : ''}
-        `;
-        container.appendChild(section);
+                <div class="card ${state.selected.has(item.id) ? 'selected' : ''}" data-id="${esc(item.id)}" data-sfx="${esc(item.sfx)}">
+                    <input type="checkbox" data-action="select" ${state.selected.has(item.id) ? 'checked' : ''} aria-label="Select ${esc(item.label)}">
+                    <span class="pos-badge">${idx + 1}</span>
+                    <button class="x" data-action="remove-image" title="Remove image" aria-label="Remove image">
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
+                    <div class="thumb"><img src="${esc(item.url)}" alt="${esc(item.label)}" loading="lazy" decoding="async"></div>
+                    <div class="label">${esc(item.label)}</div>
+                </div>`).join('')}
+            </div>` : `<div class="empty-note">No imagery is currently available for this product.</div>`}
+        </div>
+    </article>`;
+}
 
-        // --- RESTORED SORTABLEJS DRAG-AND-DROP INITIALIZATION ---
-        if (items.length > 0) {
-            const gridEl = document.getElementById(`grid_${itemCode}`);
-            new Sortable(gridEl, {
-                animation: 150,
-                ghostClass: 'opacity-30',
-                dragClass: 'scale-105',
-                onEnd: function() {
-                    // Update position badges dynamically on drag completion
-                    const children = gridEl.children;
-                    for (let i = 0; i < children.length; i++) {
-                        const badge = children[i].querySelector('.pos-badge');
-                        if (badge) badge.innerText = `Pos ${i + 1}`;
-                    }
-                }
-            });
+function renderInspector() {
+    if (!state.data) return;
+    const codes = filteredCodes();
+    state.currentList = codes;
+    const shown = codes.slice(0, state.visible);
+    const container = $('inspectorContainer');
+
+    if (!codes.length) {
+        container.innerHTML = '<div class="panel empty-note" style="text-align:center">No products match your current filters.</div>';
+    } else {
+        container.innerHTML = shown.map(productHTML).join('');
+        container.querySelectorAll('img').forEach(img => {
+            if (img.complete && img.naturalWidth) img.classList.add('loaded');
+            else {
+                img.addEventListener('load', () => img.classList.add('loaded'));
+                img.addEventListener('error', () => { img.closest('.thumb').innerHTML = '<span class="muted" style="font-size:12px">Preview unavailable</span>'; });
+            }
+        });
+        container.querySelectorAll('[data-grid]').forEach(initSortable);
+    }
+
+    const imgCount = codes.reduce((n, c) => n + getActiveItems(c).length, 0);
+    $('listCount').textContent = `Showing ${fmt(Math.min(shown.length, codes.length))} of ${fmt(codes.length)} products  |  ${fmt(imgCount)} images`;
+    $('loadMore').classList.toggle('hidden', codes.length <= shown.length);
+    $('loadMore').textContent = `Show ${Math.min(PAGE_SIZE, codes.length - shown.length)} more products`;
+    $('exportAllBtn').disabled = imgCount === 0;
+    $('exportAllBtn').textContent = imgCount ? `Export displayed images (${fmt(imgCount)})` : 'Export displayed images';
+}
+
+function initSortable(grid) {
+    const code = grid.dataset.grid;
+    new Sortable(grid, {
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        filter: 'input,button',
+        preventOnFilter: false,
+        onEnd() {
+            const cards = [...grid.children];
+            state.order[code] = cards.map(c => c.dataset.sfx);
+            cards.forEach((c, i) => { c.querySelector('.pos-badge').textContent = i + 1; });
         }
     });
 }
 
-function getActiveItems(itemCode) {
-    let info = globalData.van_url_map[itemCode];
-    return Object.entries(info.urls)
-        .filter(([suffix, url]) => globalData.valid_url_map[url] && !removedImageIds.has(`${itemCode}_${suffix}`))
-        .map(([suffix, url]) => ({
-            id: `${itemCode}_${suffix}`,
-            label: suffix === '-HERO' ? 'Hero View' : (suffix.startsWith('_') ? `View ${suffix}` : `Alt ${suffix.replace('-ALT', '')}`),
-            url: url
-        }));
-}
+/* ------------------------------------------------------------ interactions */
+$('inspectorContainer').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const productEl = btn.closest('.product');
+    const code = productEl && productEl.dataset.code;
+    const action = btn.dataset.action;
 
-function toggleSelect(id) {
-    if (selectedImageIds.has(id)) selectedImageIds.delete(id);
-    else selectedImageIds.add(id);
-    updatePopoutBar();
-    
-    // Toggle card visual selection state immediately without full re-render
-    const cardEl = document.querySelector(`.card[data-id="${id}"]`);
-    if (cardEl) {
-        if (selectedImageIds.has(id)) cardEl.classList.add('selected');
-        else cardEl.classList.remove('selected');
+    if (action === 'toggle') {
+        productEl.classList.toggle('collapsed');
+        if (productEl.classList.contains('collapsed')) state.collapsed.add(code); else state.collapsed.delete(code);
+    } else if (action === 'export-one') {
+        const rows = buildRows([code], false);
+        runDownload(btn, '/api/v1/reports/export', { rows, filename: `Image_Export_${code}` }, `Image_Export_${code}.xlsx`);
+    } else if (action === 'remove-product') {
+        state.excluded.add(code);
+        getActiveItems(code).forEach(i => state.selected.delete(i.id));
+        updateSelectionBar();
+        renderInspector();
+        toast(`${code} removed from this view`, '', { label: 'Undo', fn: () => { state.excluded.delete(code); renderInspector(); } });
+    } else if (action === 'remove-image') {
+        const id = btn.closest('.card').dataset.id;
+        state.removed.add(id);
+        state.selected.delete(id);
+        updateSelectionBar();
+        renderInspector();
+        toast('Image removed', '', { label: 'Undo', fn: () => { state.removed.delete(id); renderInspector(); } });
     }
-}
+});
 
-function togglePartition(itemCode, select) {
-    let items = getActiveItems(itemCode);
-    items.forEach(i => {
-        if (select) selectedImageIds.add(i.id);
-        else selectedImageIds.delete(i.id);
-    });
-    updatePopoutBar();
-    renderInspector();
-}
-
-function removeCard(id) {
-    removedImageIds.add(id);
-    selectedImageIds.delete(id);
-    updatePopoutBar();
-    renderInspector();
-}
-
-function removeProduct(itemCode) {
-    excludedVans.add(itemCode);
-    getActiveItems(itemCode).forEach(i => selectedImageIds.delete(i.id));
-    updatePopoutBar();
-    renderInspector();
-}
-
-function updatePopoutBar() {
-    const bar = document.getElementById('popoutBar');
-    document.getElementById('selectedCountText').innerText = `${selectedImageIds.size} selected`;
-    if (selectedImageIds.size > 0) bar.classList.add('visible');
-    else bar.classList.remove('visible');
-}
-
-async function downloadMasterReport() {
-    const response = await fetch('/api/download-master-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ van_url_map: globalData.van_url_map, valid_url_map: globalData.valid_url_map })
-    });
-    triggerDownload(await response.blob(), 'Cloudinary_Verified_Master.xlsx');
-}
-
-async function downloadSinglePartition(itemCode) {
-    let info = globalData.van_url_map[itemCode];
-    let items = getActiveItems(itemCode);
-    let rows = items.map((item, idx) => ({
-        "Handle": itemCode.toLowerCase(),
-        "Item Code": itemCode,
-        "Image Position": idx + 1,
-        "Image Src": item.url,
-        "Image Alt Text": `${itemCode} - ${item.label}`,
-        "Division": info.division
-    }));
-    downloadShopifyBatch(rows, `Shopify_Export_${itemCode}.xlsx`);
-}
-
-async function downloadSelectedBundle() {
-    let rows = [];
-    for (let [itemCode, info] of Object.entries(globalData.van_url_map)) {
-        let items = getActiveItems(itemCode);
-        items.forEach((item, idx) => {
-            if (selectedImageIds.has(item.id)) {
-                rows.push({
-                    "Handle": itemCode.toLowerCase(),
-                    "Item Code": itemCode,
-                    "Image Position": rows.length + 1,
-                    "Image Src": item.url,
-                    "Image Alt Text": `${itemCode} - ${item.label}`,
-                    "Division": info.division
-                });
-            }
+$('inspectorContainer').addEventListener('change', e => {
+    const t = e.target;
+    if (t.dataset.action === 'select') {
+        const card = t.closest('.card'), id = card.dataset.id;
+        t.checked ? state.selected.add(id) : state.selected.delete(id);
+        card.classList.toggle('selected', t.checked);
+        const productEl = t.closest('.product');
+        const items = getActiveItems(productEl.dataset.code);
+        productEl.querySelector('[data-action="partition"]').checked = items.length > 0 && items.every(i => state.selected.has(i.id));
+        updateSelectionBar();
+    } else if (t.dataset.action === 'partition') {
+        const productEl = t.closest('.product');
+        getActiveItems(productEl.dataset.code).forEach(i => t.checked ? state.selected.add(i.id) : state.selected.delete(i.id));
+        productEl.querySelectorAll('.card').forEach(c => {
+            const on = state.selected.has(c.dataset.id);
+            c.classList.toggle('selected', on);
+            c.querySelector('[data-action="select"]').checked = on;
         });
+        updateSelectionBar();
     }
-    downloadShopifyBatch(rows, 'Shopify_Multi_Product_Selected_Export.xlsx');
+});
+
+function updateSelectionBar() {
+    const n = state.selected.size;
+    $('selectedCountText').textContent = `${fmt(n)} image${n === 1 ? '' : 's'} selected`;
+    $('popoutBar').classList.toggle('visible', n > 0);
 }
 
-async function downloadShopifyBatch(rows, filename) {
-    const response = await fetch('/api/download-shopify-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows })
-    });
-    triggerDownload(await response.blob(), filename);
+let searchTimer;
+$('searchInput').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.visible = PAGE_SIZE; renderInspector(); }, 200); });
+['divFilter', 'statusFilter'].forEach(id => $(id).addEventListener('change', () => { state.visible = PAGE_SIZE; renderInspector(); }));
+$('loadMore').addEventListener('click', () => { state.visible += PAGE_SIZE; renderInspector(); });
+$('expandAll').addEventListener('click', () => { state.collapsed.clear(); renderInspector(); });
+$('collapseAll').addEventListener('click', () => { state.currentList.forEach(c => state.collapsed.add(c)); renderInspector(); });
+$('clearSelection').addEventListener('click', () => { state.selected.clear(); updateSelectionBar(); renderInspector(); });
+$('verifyBtn').addEventListener('click', runAnalysis);
+$('newAnalysisBtn').addEventListener('click', () => {
+    if (state.selected.size || state.removed.size || state.excluded.size || Object.keys(state.order).length) {
+        if (!confirm('Start a new analysis? Your current edits will be cleared.')) return;
+    }
+    state.data = null; state.selected.clear(); updateSelectionBar();
+    clearFile();
+    showView('setupView');
+});
+
+/* ------------------------------------------------------------ downloads */
+async function runDownload(btn, url, payload, filename) {
+    if (btn.classList.contains('busy')) return;
+    const original = btn.textContent;
+    btn.classList.add('busy');
+    btn.textContent = 'Preparing...';
+    try {
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!res.ok) {
+            let msg = 'The export could not be generated.';
+            try { const j = await res.json(); if (j.detail) msg = j.detail; } catch (_) {}
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        if (!blob.size) throw new Error('The export came back empty. Please try again.');
+        triggerDownload(blob, filename);
+        toast('Download started', 'success', null, 2500);
+    } catch (err) {
+        toast(err.message || 'Download failed. Please try again.', 'error', null, 6000);
+    } finally {
+        btn.classList.remove('busy');
+        btn.textContent = original;
+    }
 }
 
 function triggerDownload(blob, filename) {
-    const url = window.URL.createObjectURL(blob);
+    const typed = new Blob([blob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(typed);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
+
+$('coverageBtn').addEventListener('click', e => runDownload(e.currentTarget, '/api/v1/reports/coverage',
+    { brand: state.data.brand, items: state.data.items, available: state.data.available }, 'Catalog_Coverage_Report.xlsx'));
+
+$('exportAllBtn').addEventListener('click', e => {
+    const rows = buildRows(state.currentList, false);
+    if (!rows.length) { toast('There are no images to export.', 'error'); return; }
+    runDownload(e.currentTarget, '/api/v1/reports/export', { rows, filename: 'Image_Export_All' }, 'Image_Export_All.xlsx');
+});
+
+$('exportSelectedBtn').addEventListener('click', e => {
+    const rows = buildRows(Object.keys(state.data.items), true);
+    if (!rows.length) { toast('Select at least one image to export.', 'error'); return; }
+    runDownload(e.currentTarget, '/api/v1/reports/export', { rows, filename: 'Image_Export_Selected' }, 'Image_Export_Selected.xlsx');
+});
+
+$('year').textContent = new Date().getFullYear();
+})();
