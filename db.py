@@ -6,8 +6,19 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 # SQLite for local development; set DATABASE_URL to a PostgreSQL URL in production
 # (Supabase, Neon, Railway, Render, RDS...).
-# Vercel's database integrations may name the variable POSTGRES_URL instead of DATABASE_URL.
-DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL") or "").strip() or "sqlite:///./app.db"
+def _find_database_url():
+    """DATABASE_URL first. Vercel's database integrations may instead create POSTGRES_URL, or add a
+    prefix (e.g. STORAGE_DATABASE_URL), so also accept any variable that ends that way."""
+    for name in ("DATABASE_URL", "POSTGRES_URL"):
+        if os.getenv(name, "").strip():
+            return os.environ[name].strip()
+    for name in sorted(os.environ):
+        if name.endswith(("_DATABASE_URL", "_POSTGRES_URL")) and os.environ[name].strip().startswith(("postgres://", "postgresql://")):
+            return os.environ[name].strip()
+    return ""
+
+
+DATABASE_URL = _find_database_url() or "sqlite:///./app.db"
 if DATABASE_URL.startswith("sqlite:///./") and not os.access(".", os.W_OK):
     # Read-only filesystem (some serverless hosts): fall back to a temp file so the app can still start.
     # Data stored here is NOT permanent. Set DATABASE_URL to PostgreSQL for real use.
