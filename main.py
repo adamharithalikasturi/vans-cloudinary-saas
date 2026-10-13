@@ -1,8 +1,10 @@
 import asyncio
 import io
 import json
+import logging
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 
@@ -10,6 +12,7 @@ import aiohttp
 import pandas as pd
 from fastapi import Depends, FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -21,6 +24,7 @@ from auth import current_user, router as auth_router, usage_for
 from db import Base, SessionLocal, engine, get_db
 from models import UsageLog, User
 from security import hash_password
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
@@ -57,6 +61,28 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Catalog Asset Intelligence API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+log = logging.getLogger("uvicorn.error")
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request, exc):
+    """Never leak internals to customers; log the full traceback with a short reference."""
+    ref = uuid.uuid4().hex[:8]
+    log.error("Unhandled error [%s] %s %s", ref, request.method, request.url.path, exc_info=exc)
+    return JSONResponse({"detail": f"Something went wrong on our side. Reference: {ref}"}, status_code=500)
+
+
+@app.get("/api/v1/health")
+def health():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception:
+        log.exception("Health check: database unreachable")
+        return JSONResponse({"status": "degraded"}, status_code=503)
+
+
 app.include_router(auth_router)
 app.include_router(admin_router)
 
@@ -234,7 +260,8 @@ def normalize_catalog(df):
     """Accept anything from a single column of codes to a full SAP export.
     Returns a frame with at least 'VENDOR ARTICLE NO.'; other columns are optional."""
     df = df.copy()
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [str(c).strip().lstrip("\ufeff") for c in df.columns]
+    df = df.loc[:, ~df.columns.duplicated()].copy()
     cols = list(df.columns)
 
     # Headerless single-column file: the first code was read as the header
