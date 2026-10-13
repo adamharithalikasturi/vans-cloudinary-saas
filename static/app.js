@@ -140,7 +140,7 @@ async function runAnalysis() {
     try {
         const res = await api('/api/v1/analyze', { method: 'POST', body: fd });
         if (!res.ok) {
-            let msg = 'We could not process this request. Please try again.';
+            let msg = `We could not process this request (error ${res.status}). Please try again.`;
             try { const jr = await res.json(); if (jr.detail) msg = jr.detail; } catch (_) {}
             throw new Error(msg);
         }
@@ -450,7 +450,7 @@ async function runDownload(btn, url, payload, filename) {
     try {
         const res = await api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         if (!res.ok) {
-            let msg = 'The export could not be generated.';
+            let msg = `The export could not be generated (error ${res.status}).`;
             try { const j = await res.json(); if (j.detail) msg = j.detail; } catch (_) {}
             throw new Error(msg);
         }
@@ -492,7 +492,7 @@ $('exportSelectedBtn').addEventListener('click', e => {
 
 /* ------------------------------------------------------------ account */
 function renderUser() {
-    if (!me) return;
+    if (!me || !me.usage) return;
     $('userName').textContent = me.name || me.email;
     $('userBox').classList.remove('hidden');
     $('adminLink').classList.toggle('hidden', me.role !== 'admin');
@@ -509,7 +509,12 @@ function renderUser() {
     }
 }
 async function loadMe() {
-    try { const r = await api('/api/v1/auth/me'); me = await r.json(); renderUser(); } catch (_) {}
+    try {
+        const r = await api('/api/v1/auth/me');
+        if (!r.ok) { toast(`We could not load your account details (error ${r.status}).`, 'error', null, 8000); return; }
+        me = await r.json();
+        renderUser();
+    } catch (_) {}
 }
 $('logoutBtn').addEventListener('click', async () => {
     try { await fetch('/api/v1/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
