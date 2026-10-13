@@ -1,36 +1,64 @@
 import asyncio
 import io
+import json
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 import aiohttp
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+import models
+from admin import router as admin_router
+from auth import current_user, router as auth_router, usage_for
+from db import Base, SessionLocal, engine, get_db
+from models import UsageLog, User
+from security import hash_password
+from sqlalchemy.orm import Session
+
 from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
 from brands.timberland import (
     scrape_timberland_catalog,
     ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES,
     PROBE_GROUPS as TIMBERLAND_PROBE_GROUPS,
+    REGIONAL_SOURCES as TIMBERLAND_REGIONAL,
 )
 
-app = FastAPI(title="Catalog Asset Intelligence API", docs_url=None, redoc_url=None, openapi_url=None)
+def seed_admin():
+    """Create the first administrator from ADMIN_EMAIL / ADMIN_PASSWORD (if set)."""
+    email = os.getenv("ADMIN_EMAIL", "").strip().lower()
+    password = os.getenv("ADMIN_PASSWORD", "")
+    db = SessionLocal()
+    try:
+        if email and password and not db.query(User).filter(User.email == email).first():
+            db.add(User(email=email, name="Administrator", role="admin", password_hash=hash_password(password), monthly_limit=None))
+            db.commit()
+            print(f"[setup] Administrator account created: {email}")
+        elif not db.query(User).filter(User.role == "admin").first():
+            print("[setup] WARNING: no administrator exists. Set ADMIN_EMAIL and ADMIN_PASSWORD and restart.")
+        db.query(models.SessionToken).filter(models.SessionToken.expires_at < models.utcnow()).delete()
+        db.commit()
+    finally:
+        db.close()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
-)
+
+@asynccontextmanager
+async def lifespan(_app):
+    Base.metadata.create_all(engine)
+    seed_admin()
+    yield
+
+
+app = FastAPI(title="Catalog Asset Intelligence API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(admin_router)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -57,6 +85,7 @@ BRAND_CONFIG = {
         ],
     },
 }
+MAX_ITEMS_PER_RUN = int(os.getenv("MAX_ITEMS_PER_RUN", "20000"))
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "400"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "5"))
 
@@ -81,16 +110,52 @@ async def check_url(session, semaphore, url, timeout):
         return url, False
 
 
-async def validate_urls(url_list, max_concurrent, timeout):
+async def validate_urls(url_list, max_concurrent, timeout, on_progress=None):
+    url_list = list(url_list)
+    total = len(url_list)
     semaphore = asyncio.Semaphore(max_concurrent)
     connector = aiohttp.TCPConnector(limit=max_concurrent, ttl_dns_cache=600, ssl=False)
     results = {}
+    if not total:
+        return results
     async with aiohttp.ClientSession(connector=connector, headers=HEADERS) as session:
         tasks = [check_url(session, semaphore, url, timeout) for url in url_list]
+        done = 0
         for future in asyncio.as_completed(tasks):
             url, status = await future
             results[url] = status
+            done += 1
+            if on_progress:
+                on_progress(done, total)
     return results
+
+
+async def regional_pass(item_url_map, valid, sources, mc, timeout, on_progress=None):
+    """Second chance for products with no imagery: look on other market image servers.
+    Sources come from brands/<brand>.py -> REGIONAL_SOURCES (empty until configured)."""
+    for src in sources:
+        missing = [c for c, d in item_url_map.items() if not any(valid.get(u) for u in d["urls"].values())]
+        if not missing:
+            return
+        sfxs = src.get("suffixes") or ["-HERO"]
+        key = src["key"]
+
+        def build(code, sfx):
+            return src["template"].format(root=item_url_map[code]["root"], suffix=sfx)
+
+        probe = {c: build(c, sfxs[0]) for c in missing}
+        res = await validate_urls(list(probe.values()), mc, timeout, on_progress)
+        hits = [c for c, u in probe.items() if res.get(u)]
+        for c in hits:
+            item_url_map[c]["urls"][f"{sfxs[0]}~{key}"] = probe[c]
+            valid[probe[c]] = True
+
+        rest = {(c, s_): build(c, s_) for c in hits for s_ in sfxs[1:]}
+        res = await validate_urls(list(rest.values()), mc, timeout, on_progress)
+        for (c, s_), u in rest.items():
+            if res.get(u):
+                item_url_map[c]["urls"][f"{s_}~{key}"] = u
+                valid[u] = True
 
 
 # ------------------------------------------------------------------ excel helpers
@@ -152,27 +217,102 @@ def safe_filename(name, default):
     return name if name.lower().endswith(".xlsx") else name + ".xlsx"
 
 
+# ------------------------------------------------------------------ catalog intake
+CODE_LIKE = re.compile(r"^[A-Z0-9]{8,14}(-[A-Z0-9]+)?$")
+
+
+def looks_like_code(v):
+    v = str(v).strip().upper()
+    return bool(CODE_LIKE.match(v)) and any(c.isdigit() for c in v) and any(c.isalpha() for c in v)
+
+
+def _norm(c):
+    return re.sub(r"[^A-Z0-9]", "", str(c).upper())
+
+
+def normalize_catalog(df):
+    """Accept anything from a single column of codes to a full SAP export.
+    Returns a frame with at least 'VENDOR ARTICLE NO.'; other columns are optional."""
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    cols = list(df.columns)
+
+    # Headerless single-column file: the first code was read as the header
+    if len(cols) == 1 and looks_like_code(cols[0]):
+        df = pd.concat([pd.DataFrame({cols[0]: [cols[0]]}), df], ignore_index=True)
+        df.columns = ["VENDOR ARTICLE NO."]
+        cols = list(df.columns)
+
+    code_col = None
+    keys = ["VENDORARTICLENO", "VENDORARTICLE", "ARTICLENO", "ARTICLE", "STYLE", "SKU", "ITEMCODE", "ITEM", "PRODUCTCODE", "CODE", "VAN"]
+    for key in keys:
+        code_col = next((c for c in cols if _norm(c) == key), None)
+        if code_col:
+            break
+    if not code_col:
+        for key in keys[:5]:
+            code_col = next((c for c in cols if key in _norm(c)), None)
+            if code_col:
+                break
+    if not code_col:
+        for c in cols:
+            sample = df[c].dropna().astype(str).head(200)
+            if len(sample) and sample.map(looks_like_code).mean() > 0.6:
+                code_col = c
+                break
+    if not code_col and len(cols) == 1:
+        code_col = cols[0]
+    if not code_col:
+        raise HTTPException(status_code=400, detail="No item codes were found. Include a column of item codes (for example 'VENDOR ARTICLE NO.').")
+
+    if code_col != "VENDOR ARTICLE NO.":
+        df = df.drop(columns=[c for c in ["VENDOR ARTICLE NO."] if c in df.columns])
+        df = df.rename(columns={code_col: "VENDOR ARTICLE NO."})
+
+    df["VENDOR ARTICLE NO."] = df["VENDOR ARTICLE NO."].astype(str).str.strip().str.upper()
+    df = df[~df["VENDOR ARTICLE NO."].isin(["", "NAN", "NONE"])]
+
+    if "MH3 DIVISION" not in df.columns:
+        df["MH3 DIVISION"] = df["DIVISION"] if "DIVISION" in df.columns else ""
+    if "AH1 SILLOUTE" not in df.columns:
+        df["AH1 SILLOUTE"] = ""
+    return df
+
+
+def codes_to_frame(text):
+    codes = [c for c in re.split(r"[\s,;]+", text or "") if c]
+    return pd.DataFrame({"VENDOR ARTICLE NO.": list(dict.fromkeys(codes))})
+
+
 # ------------------------------------------------------------------ endpoints
 @app.post("/api/v1/analyze")
-async def analyze_catalog(brand: str = Form("vans"), file: UploadFile = File(...)):
-    contents = await file.read()
-    file_name = (file.filename or "").lower()
+async def analyze_catalog(
+    brand: str = Form("vans"),
+    file: UploadFile = File(None),
+    codes: str = Form(""),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    if file is not None and file.filename:
+        contents = await file.read()
+        file_name = file.filename.lower()
+        try:
+            if file_name.endswith(".csv"):
+                df = pd.read_csv(io.BytesIO(contents), low_memory=False)
+            elif file_name.endswith((".xlsx", ".xls")):
+                df = pd.read_excel(io.BytesIO(contents))
+            else:
+                raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .csv or .xlsx file.")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="The file could not be read. Please check that it is a valid spreadsheet.")
+    elif codes.strip():
+        df = codes_to_frame(codes)
+    else:
+        raise HTTPException(status_code=400, detail="Please upload a file or paste item codes.")
 
-    try:
-        if file_name.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents), low_memory=False)
-        elif file_name.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file format. Please upload a .csv or .xlsx file.")
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=400, detail="The file could not be read. Please check that it is a valid spreadsheet.")
-
-    df.columns = [str(c).strip() for c in df.columns]
-    if "VENDOR ARTICLE NO." not in df.columns:
-        raise HTTPException(status_code=400, detail="Required column 'VENDOR ARTICLE NO.' was not found in the file.")
+    df = normalize_catalog(df)
 
     brand_lower = brand.lower().strip()
     cfg = BRAND_CONFIG.get(brand_lower)
@@ -180,51 +320,103 @@ async def analyze_catalog(brand: str = Form("vans"), file: UploadFile = File(...
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
 
     if brand_lower == "vans":
-        for col in ("MH3 DIVISION", "AH1 SILLOUTE"):
-            if col not in df.columns:
-                df[col] = ""
         item_url_map, all_urls, _ = parse_vans_catalog(df, cfg["base"], cfg["preset"])
     else:
         item_url_map, all_urls, _ = scrape_timberland_catalog(df, cfg["base"], cfg["preset"])
 
     if not item_url_map:
         raise HTTPException(status_code=400, detail="No valid products were found in the file.")
+    if len(item_url_map) > MAX_ITEMS_PER_RUN:
+        raise HTTPException(status_code=400, detail=f"Please submit no more than {MAX_ITEMS_PER_RUN:,} products at a time.")
 
-    if brand_lower == "timberland":
-        probes = {p for p, _ in TIMBERLAND_PROBE_GROUPS}
-        probe_urls = {d["urls"][p] for d in item_url_map.values() for p in probes if p in d["urls"]}
-        valid_url_map = await validate_urls(list(probe_urls), MAX_CONCURRENT, REQUEST_TIMEOUT)
+    used, limit = usage_for(db, user)
+    n_items = len(item_url_map)
+    if limit is not None and used + n_items > limit:
+        remaining = max(limit - used, 0)
+        raise HTTPException(
+            status_code=403,
+            detail=f"This request ({n_items:,} products) exceeds your monthly allowance. "
+                   f"You have {remaining:,} of {limit:,} products remaining this month. Contact support to increase your limit.",
+        )
 
-        rest = set()
-        for probe, group in TIMBERLAND_PROBE_GROUPS:
-            for d in item_url_map.values():
-                if valid_url_map.get(d["urls"].get(probe), False):
-                    rest.update(d["urls"][s] for s in group if s in d["urls"])
-        rest -= set(valid_url_map)
-        valid_url_map.update(await validate_urls(list(rest), MAX_CONCURRENT, REQUEST_TIMEOUT))
+    user_id = user.id
+    source = (file.filename if file is not None and file.filename else f"{n_items} pasted codes")[:250]
+    regional = TIMBERLAND_REGIONAL if brand_lower == "timberland" else []
 
-        for u in all_urls:
-            valid_url_map.setdefault(u, False)
-    else:
-        valid_url_map = await validate_urls(list(all_urls), MAX_CONCURRENT, REQUEST_TIMEOUT)
+    async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
 
-    return {
-        "brand": brand_lower,
-        "lookups": cfg["lookups"],
-        "items": item_url_map,
-        "available": valid_url_map,
-        "summary": {
-            "total_items": len(item_url_map),
-            "active_items": sum(
-                1 for v in item_url_map.values() if any(valid_url_map.get(u, False) for u in v["urls"].values())
-            ),
-            "total_images_found": sum(1 for ok in valid_url_map.values() if ok),
-        },
-    }
+        def stage(label, lo, hi):
+            last = {"pct": -1, "done": -1}
+
+            def cb(done, total):
+                pct = int(lo + (hi - lo) * (done / total)) if total else hi
+                if pct != last["pct"] or done == total:
+                    last["pct"] = pct
+                    queue.put_nowait({"type": "progress", "percent": pct, "done": done, "total": total, "message": label})
+
+            return cb
+
+        async def worker():
+            try:
+                queue.put_nowait({"type": "progress", "percent": 1, "done": 0, "total": 0, "message": "Preparing analysis"})
+                if brand_lower == "timberland":
+                    probes = {p for p, _ in TIMBERLAND_PROBE_GROUPS}
+                    probe_urls = {d["urls"][p] for d in item_url_map.values() for p in probes if p in d["urls"]}
+                    valid = await validate_urls(probe_urls, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Validating asset availability", 2, 30))
+                    rest = set()
+                    for probe, group in TIMBERLAND_PROBE_GROUPS:
+                        for d in item_url_map.values():
+                            if valid.get(d["urls"].get(probe), False):
+                                rest.update(d["urls"][s_] for s_ in group if s_ in d["urls"])
+                    rest -= set(valid)
+                    valid.update(await validate_urls(rest, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Completing coverage checks", 30, 90 if regional else 96)))
+                    for u in all_urls:
+                        valid.setdefault(u, False)
+                else:
+                    valid = await validate_urls(all_urls, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Validating asset availability", 2, 96))
+
+                if regional:
+                    await regional_pass(item_url_map, valid, regional, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Checking additional markets", 90, 97))
+
+                queue.put_nowait({"type": "progress", "percent": 98, "done": 0, "total": 0, "message": "Compiling results"})
+                active = sum(1 for v in item_url_map.values() if any(valid.get(u, False) for u in v["urls"].values()))
+                images = sum(1 for ok in valid.values() if ok)
+
+                log_db = SessionLocal()
+                try:
+                    log_db.add(UsageLog(user_id=user_id, brand=brand_lower, source=source, items_count=n_items, images_found=images))
+                    log_db.commit()
+                finally:
+                    log_db.close()
+
+                queue.put_nowait({"type": "result", "data": {
+                    "brand": brand_lower,
+                    "lookups": cfg["lookups"],
+                    "items": item_url_map,
+                    "available": valid,
+                    "summary": {"total_items": n_items, "active_items": active, "total_images_found": images},
+                }})
+            except Exception:
+                queue.put_nowait({"type": "error", "detail": "The analysis could not be completed. Please try again."})
+            finally:
+                queue.put_nowait(None)
+
+        task = asyncio.create_task(worker())
+        try:
+            while True:
+                ev = await queue.get()
+                if ev is None:
+                    break
+                yield json.dumps(ev) + "\n"
+        finally:
+            task.cancel()
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/v1/reports/coverage")
-async def coverage_report(payload: dict):
+async def coverage_report(payload: dict, _user: User = Depends(current_user)):
     brand = str(payload.get("brand", "vans")).lower()
     items = payload.get("items", {})
     available = payload.get("available", {})
@@ -291,7 +483,7 @@ async def coverage_report(payload: dict):
 
 
 @app.post("/api/v1/reports/export")
-async def export_report(payload: dict):
+async def export_report(payload: dict, _user: User = Depends(current_user)):
     rows = payload.get("rows", [])
     if not isinstance(rows, list) or not rows:
         raise HTTPException(status_code=400, detail="There are no images to export.")
