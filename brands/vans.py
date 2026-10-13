@@ -33,7 +33,11 @@ def parse_vans_catalog(df, base_cdn_url, preset):
         silhouette = str(row['AH1 SILLOUTE']).upper()
         root_van = van[:-1] if van.endswith('1') else van
         
-        if 'FOOTWEAR' in division or 'SHOES' in silhouette:
+        known = division not in ('', '#', 'NAN') or silhouette not in ('', '#', 'NAN')
+        if not known:
+            # Only the item code was supplied: check every angle we know about
+            active_suffixes = ALL_UNIQUE_SUFFIXES
+        elif 'FOOTWEAR' in division or 'SHOES' in silhouette:
             active_suffixes = [s[0] for s in FOOTWEAR_SUFFIXES]
         elif 'APPAREL' in division or silhouette in ['TOPS', 'BOTTOMS']:
             active_suffixes = [s[0] for s in APPAREL_SUFFIXES]
@@ -42,7 +46,7 @@ def parse_vans_catalog(df, base_cdn_url, preset):
             
         van_url_map[van] = {
             'root': root_van,
-            'division': division if division != '#' else 'FOOTWEAR',
+            'division': division if division not in ('', '#', 'NAN') else ('FOOTWEAR' if known else 'Not specified'),
             'urls': {}
         }
         
