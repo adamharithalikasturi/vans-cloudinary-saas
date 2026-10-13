@@ -206,6 +206,20 @@ function buildRows(codes, onlySelected) {
 }
 
 /* ------------------------------------------------------------ rendering */
+function lookupHTML(info) {
+    const sites = (state.data && state.data.lookups) || [];
+    if (!sites.length) return '';
+    const links = sites.map(s => {
+        const url = s.template.replace('{root}', encodeURIComponent(info.root));
+        return `<a class="chip" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(s.name)}${s.note ? ` <em>${esc(s.note)}</em>` : ''}</a>`;
+    }).join('');
+    return `<div class="lookup">
+        <div class="lookup-title">Search regional storefronts</div>
+        <div class="lookup-sub">Imagery may be published on another market. Open a storefront to look for style ${esc(info.root)}.</div>
+        <div class="lookup-links">${links}</div>
+    </div>`;
+}
+
 const CHEVRON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 
 function productHTML(code) {
@@ -243,7 +257,7 @@ function productHTML(code) {
                     <div class="thumb"><img src="${esc(item.url)}" alt="${esc(item.label)}" loading="lazy" decoding="async"></div>
                     <div class="label">${esc(item.label)}</div>
                 </div>`).join('')}
-            </div>` : `<div class="empty-note">No imagery is currently available for this product.</div>`}
+            </div>` : `<div class="empty-note">No imagery is currently available for this product.</div>${lookupHTML(info)}`}
         </div>
     </article>`;
 }
@@ -414,6 +428,13 @@ $('exportSelectedBtn').addEventListener('click', e => {
     const rows = buildRows(Object.keys(state.data.items), true);
     if (!rows.length) { toast('Select at least one image to export.', 'error'); return; }
     runDownload(e.currentTarget, '/api/v1/reports/export', { rows, filename: 'Image_Export_Selected' }, 'Image_Export_Selected.xlsx');
+});
+
+/* ------------------------------------------------------------ theme */
+$('themeToggle').addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('theme', next); } catch (_) {}
 });
 
 $('year').textContent = new Date().getFullYear();
