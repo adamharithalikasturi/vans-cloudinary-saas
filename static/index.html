@@ -3,104 +3,161 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Multi-Brand Enterprise Asset Verifier & Inspector</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Asset Intelligence | Catalog Imagery Coverage Platform</title>
+    <meta name="description" content="Validate product imagery coverage across your catalog and export channel-ready image feeds.">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f172a'/%3E%3Cpath d='M9 21l5-10 4 7 2-4 3 7z' fill='%2360a5fa'/%3E%3C/svg%3E">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/styles.css">
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-    <style>
-        .grid-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
-        .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; align-items: center; position: relative; cursor: grab; user-select: none; }
-        .card.selected { border: 2px solid #3b82f6; background: #0f172a; }
-        .card img { width: 100%; height: 150px; object-fit: contain; border-radius: 4px; margin-top: 18px; pointer-events: none; }
-        .popout-bar { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(100px); background: #0f172a; border: 1px solid #334155; color: white; padding: 10px 20px; border-radius: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: flex; align-items: center; gap: 16px; z-index: 9999; transition: transform 0.25s ease; }
-        .popout-bar.visible { transform: translateX(-50%) translateY(0); }
-    </style>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
-    <header class="bg-slate-900 border-b border-slate-800 p-4 px-8 flex justify-between items-center">
-        <h1 class="text-xl font-bold text-white flex items-center gap-2">👟 Multi-Brand Asset Availability Tracker</h1>
-        <span class="text-xs bg-red-600/20 text-red-400 px-3 py-1 rounded-full font-semibold border border-red-500/30">a.alikasturi@gmg.com</span>
+<body>
+    <header class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="/" aria-label="Asset Intelligence home">
+                <span class="brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 32 32" width="28" height="28"><rect width="32" height="32" rx="8" fill="#1e293b"/><path d="M9 21l5-10 4 7 2-4 3 7z" fill="#60a5fa"/></svg>
+                </span>
+                <span class="brand-text">Asset Intelligence<small>Catalog Imagery Platform</small></span>
+            </a>
+            <a class="contact-chip" href="mailto:a.alikasturi@gmg.com?subject=Asset%20Intelligence%20Support">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
+                a.alikasturi@gmg.com
+            </a>
+        </div>
     </header>
 
-    <div class="flex flex-1">
-        <!-- Sidebar Configuration -->
-        <aside class="w-80 bg-slate-900 border-r border-slate-800 p-6 space-y-4">
-            <h2 class="font-bold text-sm uppercase tracking-wider text-slate-400">⚙️ Configuration</h2>
-            
-            <!-- Brand Selector Dropdown -->
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Select Brand</label>
-                <select id="brandSelect" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm text-white" onchange="updateDefaultCdn()">
-                    <option value="vans">Vans</option>
-                    <option value="timberland">Timberland</option>
+    <main class="page">
+        <!-- Step 1: New analysis -->
+        <section id="setupView" class="setup">
+            <div class="intro">
+                <span class="eyebrow">Imagery Coverage Analysis</span>
+                <h1>Know exactly which products are ready to publish.</h1>
+                <p>Upload your product catalog and receive a complete picture of imagery coverage, with channel-ready exports in seconds.</p>
+            </div>
+
+            <div class="panel">
+                <div class="step">
+                    <div class="step-head"><span class="step-no">1</span><h2>Select brand</h2></div>
+                    <div class="brand-options" role="radiogroup" aria-label="Brand">
+                        <label class="brand-option">
+                            <input type="radio" name="brand" value="vans" checked>
+                            <span class="brand-card"><strong>Vans</strong><em>Footwear, apparel and accessories</em></span>
+                        </label>
+                        <label class="brand-option">
+                            <input type="radio" name="brand" value="timberland">
+                            <span class="brand-card"><strong>Timberland</strong><em>Footwear, apparel and accessories</em></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="step">
+                    <div class="step-head"><span class="step-no">2</span><h2>Upload catalog</h2></div>
+                    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload catalog file">
+                        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" hidden>
+                        <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0l-4 4m4-4l4 4"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
+                        <div class="dz-title">Drag and drop your file here, or <span class="link">browse</span></div>
+                        <div class="dz-sub">Supported formats: .csv, .xlsx, .xls</div>
+                    </div>
+                    <div id="fileChip" class="file-chip hidden">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 3v5h5"/></svg>
+                        <div class="fc-meta"><div id="fileName" class="fc-name"></div><div id="fileSize" class="fc-size"></div></div>
+                        <button type="button" id="fileClear" class="icon-btn" aria-label="Remove file">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <button id="verifyBtn" class="btn btn-primary btn-lg" disabled>Run analysis</button>
+            </div>
+        </section>
+
+        <!-- Processing -->
+        <section id="loadingView" class="loading hidden" aria-live="polite">
+            <div class="loader"><span></span><span></span><span></span></div>
+            <h2 id="loadingTitle">Analyzing your catalog</h2>
+            <p id="loadingText">Reading catalog records</p>
+            <div class="bar"><div class="bar-fill"></div></div>
+            <small>Large catalogs can take a minute. Please keep this window open.</small>
+        </section>
+
+        <!-- Results -->
+        <section id="resultsView" class="results hidden">
+            <div class="results-head">
+                <div>
+                    <span class="eyebrow" id="resultsBrand"></span>
+                    <h1>Coverage overview</h1>
+                    <p id="resultsFile" class="muted"></p>
+                </div>
+                <div class="head-actions">
+                    <button class="btn btn-ghost" id="newAnalysisBtn">New analysis</button>
+                    <button class="btn btn-primary" id="coverageBtn">Download coverage report</button>
+                </div>
+            </div>
+
+            <div class="kpis">
+                <div class="kpi"><span>Total products</span><strong id="mTotal">0</strong></div>
+                <div class="kpi ok"><span>With imagery</span><strong id="mActive">0</strong></div>
+                <div class="kpi bad"><span>Without imagery</span><strong id="mMissing">0</strong></div>
+                <div class="kpi info"><span>Verified images</span><strong id="mImages">0</strong></div>
+            </div>
+
+            <div class="coverage">
+                <div class="coverage-row"><span>Catalog coverage</span><strong id="coveragePct">0%</strong></div>
+                <div class="meter"><div id="meterFill" class="meter-fill"></div></div>
+            </div>
+
+            <div class="workspace-head">
+                <h2>Image workspace</h2>
+                <p class="muted">Review imagery, remove what you do not need, drag to set the display order, and export.</p>
+            </div>
+
+            <div class="toolbar">
+                <div class="search">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+                    <input type="text" id="searchInput" placeholder="Search item codes, separated by commas" autocomplete="off">
+                </div>
+                <select id="divFilter" aria-label="Division"><option value="All Divisions">All divisions</option></select>
+                <select id="statusFilter" aria-label="Status">
+                    <option value="All Products">All products</option>
+                    <option value="Active Only">With imagery</option>
+                    <option value="Missing Only">Without imagery</option>
                 </select>
             </div>
 
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Base CDN URL</label>
-                <input type="text" id="baseCdn" value="https://img.vans.com/image/upload/" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Transformation Preset</label>
-                <input type="text" id="preset" placeholder="Optional" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Max Concurrent Requests</label>
-                <input type="number" id="maxConcurrent" value="400" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <div>
-                <label class="block text-xs text-slate-400 mb-1">Timeout (sec)</label>
-                <input type="number" id="timeout" value="5" class="w-full bg-slate-950 border border-slate-800 rounded p-2 text-sm">
-            </div>
-            <hr class="border-slate-800">
-            <div>
-                <label class="block text-xs font-semibold text-slate-400 mb-2">Upload Catalog File (.csv / .xlsx)</label>
-                <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" class="w-full text-xs text-slate-400 file:mr-2 file:py-2 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-red-600 file:text-white hover:file:bg-red-700 cursor-pointer">
-            </div>
-            <button onclick="runVerification()" id="verifyBtn" class="w-full bg-red-600 hover:bg-red-700 font-bold py-2.5 rounded text-sm transition cursor-pointer">🚀 Start Verification</button>
-        </aside>
-
-        <!-- Main Content Area -->
-        <main class="flex-1 p-8 overflow-y-auto">
-            <div id="statusContainer" class="hidden mb-6 p-4 bg-slate-900 border border-slate-800 rounded text-sm text-amber-400 font-medium animate-pulse">Processing catalog records and probing CDN...</div>
-            <div id="resultsArea" class="space-y-6 hidden">
-                <div class="grid grid-cols-4 gap-4">
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Total Items</div><div id="mTotal" class="text-2xl font-bold">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Active Items</div><div id="mActive" class="text-2xl font-bold text-emerald-400">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Missing Items</div><div id="mMissing" class="text-2xl font-bold text-rose-400">0</div></div>
-                    <div class="bg-slate-900 p-4 rounded border border-slate-800"><div class="text-xs text-slate-400">Valid Images</div><div id="mImages" class="text-2xl font-bold text-blue-400">0</div></div>
+            <div class="list-meta">
+                <span id="listCount"></span>
+                <div class="list-actions">
+                    <button class="link-btn" id="expandAll">Expand all</button>
+                    <button class="link-btn" id="collapseAll">Collapse all</button>
+                    <button class="btn btn-outline btn-sm" id="exportAllBtn">Export displayed images</button>
                 </div>
-                <button onclick="downloadMasterReport()" class="bg-emerald-600 hover:bg-emerald-700 font-bold px-4 py-2 rounded text-sm cursor-pointer">📥 Download Master Excel Report</button>
-                <div id="globalExportContainer"></div>
-                <hr class="border-slate-800">
-                <h2 class="text-lg font-bold">🖼️ Interactive Visual Inspector & Exporter</h2>
-                <div class="grid grid-cols-2 gap-4">
-                    <select id="divFilter" onchange="renderInspector()" class="bg-slate-900 border border-slate-800 rounded p-2 text-sm"><option value="All Divisions">All Divisions</option></select>
-                    <select id="statusFilter" onchange="renderInspector()" class="bg-slate-900 border border-slate-800 rounded p-2 text-sm"><option value="All Products">All Products</option><option value="Active Only">Active Only</option><option value="Missing Only">Missing Only</option></select>
-                </div>
-                <input type="text" id="searchInput" placeholder="Search Item/SKU(s) separated by commas..." class="w-full bg-slate-900 border border-slate-800 rounded p-3 text-sm" oninput="renderInspector()">
-                <div id="inspectorContainer" class="space-y-6"></div>
             </div>
-        </main>
-    </div>
 
-    <!-- Floating Pop-out Bar -->
-    <div id="popoutBar" class="popout-bar">
+            <div id="inspectorContainer" class="inspector"></div>
+            <div class="load-more-wrap"><button id="loadMore" class="btn btn-outline hidden">Show more products</button></div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="footer-inner">
+            <span>&copy; <span id="year">2026</span> Asset Intelligence. All rights reserved.</span>
+            <span class="footer-links">
+                <a href="mailto:a.alikasturi@gmg.com?subject=Asset%20Intelligence%20Support">Contact support</a>
+            </span>
+        </div>
+    </footer>
+
+    <!-- Selection bar -->
+    <div id="popoutBar" class="selection-bar" role="region" aria-label="Selection actions">
         <span id="selectedCountText">0 selected</span>
-        <button onclick="downloadSelectedBundle()" class="bg-blue-600 hover:bg-blue-700 px-4 py-1.5 rounded text-xs font-bold cursor-pointer">📥 Download Selected for Export</button>
+        <button class="link-btn light" id="clearSelection">Clear</button>
+        <button class="btn btn-primary btn-sm" id="exportSelectedBtn">Export selected</button>
     </div>
 
-    <script>
-        // Helper function to auto-update base CDN URL based on selected brand
-        function updateDefaultCdn() {
-            const brand = document.getElementById('brandSelect').value;
-            const cdnInput = document.getElementById('baseCdn');
-            if (brand === 'vans') {
-                cdnInput.value = 'https://img.vans.com/image/upload/';
-            } else if (brand === 'timberland') {
-                cdnInput.value = 'https://images.timberland.com/is/image/Timberland/'; // Adjust to Timberland's CDN domain when ready
-            }
-        }
-    </script>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+
     <script src="/app.js"></script>
 </body>
 </html>
