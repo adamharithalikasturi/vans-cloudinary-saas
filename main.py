@@ -18,7 +18,7 @@ from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
 from brands.timberland import (
     scrape_timberland_catalog,
     ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES,
-    PROBE_SUFFIX as TIMBERLAND_PROBE,
+    PROBE_GROUPS as TIMBERLAND_PROBE_GROUPS,
 )
 
 app = FastAPI(title="Catalog Asset Intelligence API", docs_url=None, redoc_url=None, openapi_url=None)
@@ -37,9 +37,25 @@ HEADERS = {
 }
 
 # Everything customers should not need to see or tune lives here, server-side.
+def _site_lookup(name, domain, note=""):
+    # Search-engine site lookup: works for any regional storefront without
+    # depending on that site's own (changing) search URL format.
+    return {"name": name, "note": note, "template": f"https://www.google.com/search?q=site%3A{domain}+{{root}}"}
+
+
 BRAND_CONFIG = {
-    "vans": {"base": "https://img.vans.com/image/upload/", "preset": ""},
-    "timberland": {"base": "https://assets.timberland.com/", "preset": ""},
+    "vans": {"base": "https://img.vans.com/image/upload/", "preset": "", "lookups": []},
+    "timberland": {
+        "base": "https://assets.timberland.com/",
+        "preset": "",
+        "lookups": [
+            _site_lookup("Taiwan", "timberland.com.tw", "Often has it"),
+            _site_lookup("Japan", "timberland.co.jp"),
+            _site_lookup("Korea", "timberland.co.kr"),
+            _site_lookup("UK", "timberland.co.uk"),
+            _site_lookup("Global", "timberland.com"),
+        ],
+    },
 }
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "400"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "5"))
@@ -174,15 +190,16 @@ async def analyze_catalog(brand: str = Form("vans"), file: UploadFile = File(...
     if not item_url_map:
         raise HTTPException(status_code=400, detail="No valid products were found in the file.")
 
-    probe = TIMBERLAND_PROBE if brand_lower == "timberland" else None
-    if probe:
-        probe_urls = {d["urls"][probe] for d in item_url_map.values() if probe in d["urls"]}
+    if brand_lower == "timberland":
+        probes = {p for p, _ in TIMBERLAND_PROBE_GROUPS}
+        probe_urls = {d["urls"][p] for d in item_url_map.values() for p in probes if p in d["urls"]}
         valid_url_map = await validate_urls(list(probe_urls), MAX_CONCURRENT, REQUEST_TIMEOUT)
 
         rest = set()
-        for d in item_url_map.values():
-            if valid_url_map.get(d["urls"].get(probe), False):
-                rest.update(u for sfx, u in d["urls"].items() if sfx != probe)
+        for probe, group in TIMBERLAND_PROBE_GROUPS:
+            for d in item_url_map.values():
+                if valid_url_map.get(d["urls"].get(probe), False):
+                    rest.update(d["urls"][s] for s in group if s in d["urls"])
         rest -= set(valid_url_map)
         valid_url_map.update(await validate_urls(list(rest), MAX_CONCURRENT, REQUEST_TIMEOUT))
 
@@ -193,6 +210,7 @@ async def analyze_catalog(brand: str = Form("vans"), file: UploadFile = File(...
 
     return {
         "brand": brand_lower,
+        "lookups": cfg["lookups"],
         "items": item_url_map,
         "available": valid_url_map,
         "summary": {
