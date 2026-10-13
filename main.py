@@ -53,12 +53,22 @@ def seed_admin():
         db.close()
 
 
+def init_database():
+    """Idempotent. Also runs at import time so it works on hosts that skip lifespan events."""
+    try:
+        Base.metadata.create_all(engine)
+        seed_admin()
+    except Exception:
+        logging.getLogger("uvicorn.error").exception("Database initialisation failed. Check DATABASE_URL.")
+
+
 @asynccontextmanager
 async def lifespan(_app):
-    Base.metadata.create_all(engine)
-    seed_admin()
+    init_database()
     yield
 
+
+init_database()
 
 app = FastAPI(title="Catalog Asset Intelligence API", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 log = logging.getLogger("uvicorn.error")
@@ -74,13 +84,25 @@ async def unhandled_error(request, exc):
 
 @app.get("/api/v1/health")
 def health():
+    """Safe diagnostics: no secrets, only what is needed to see why sign-in might fail."""
+    info = {"database": engine.dialect.name}
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
-        return {"status": "ok"}
-    except Exception:
+        info["connection"] = "ok"
+    except Exception as exc:
         log.exception("Health check: database unreachable")
-        return JSONResponse({"status": "degraded"}, status_code=503)
+        return JSONResponse({**info, "status": "degraded", "connection": "failed", "error": type(exc).__name__}, status_code=503)
+    db = SessionLocal()
+    try:
+        info["admin_exists"] = db.query(User).filter(User.role == "admin").first() is not None
+        info["status"] = "ok"
+        return info
+    except Exception as exc:
+        log.exception("Health check: tables missing or unreadable")
+        return JSONResponse({**info, "status": "degraded", "tables": "missing", "error": type(exc).__name__}, status_code=503)
+    finally:
+        db.close()
 
 
 app.include_router(auth_router)
