@@ -51,8 +51,19 @@ def parse_vans_catalog(df, base_cdn_url, preset):
         }
         
         for suffix in active_suffixes:
-            url = f"{base_cdn_url}{preset_prefix}{root_van}{suffix}.jpg"
-            van_url_map[van]['urls'][suffix] = url
-            all_urls_to_check.add(url)
+            # Format 1: Standard / previous style using base_cdn_url
+            url_standard = f"{base_cdn_url}{preset_prefix}{root_van}{suffix}.jpg"
+            van_url_map[van]['urls'][f"{suffix}_standard"] = url_standard
+            all_urls_to_check.add(url_standard)
+            
+            # Format 2: EU asset style with the trailing slash before .jpg
+            url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
+            van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
+            all_urls_to_check.add(url_eu)
+
+            # Format 3: US style (Standard)
+            url_us = f"https://img.vans.com/image/upload/{preset_prefix}{root_van}{suffix}.jpg"
+            van_url_map[van]['urls'][f"{suffix}_us"] = url_us
+            all_urls_to_check.add(url_us)
 
     return van_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
