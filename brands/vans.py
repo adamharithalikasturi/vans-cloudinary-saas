@@ -51,19 +51,31 @@ def parse_vans_catalog(df, base_cdn_url, preset):
         }
         
         for suffix in active_suffixes:
-            # Format 1: Standard / previous style using base_cdn_url
+            # Construct the three regional/format variants for this suffix
             url_standard = f"{base_cdn_url}{preset_prefix}{root_van}{suffix}.jpg"
-            van_url_map[van]['urls'][f"{suffix}_standard"] = url_standard
-            all_urls_to_check.add(url_standard)
-            
-            # Format 2: EU asset style with the trailing slash before .jpg
-            url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
-            van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
-            all_urls_to_check.add(url_eu)
-
-            # Format 3: US style (Standard)
             url_us = f"https://img.vans.com/image/upload/{preset_prefix}{root_van}{suffix}.jpg"
-            van_url_map[van]['urls'][f"{suffix}_us"] = url_us
+            url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
+            
+            # Add all of them to the checker so the backend probes each source
+            all_urls_to_check.add(url_standard)
             all_urls_to_check.add(url_us)
+            all_urls_to_check.add(url_eu)
+            
+            # Fallback mapping order: Standard first, then US, then EU.
+            # We map them under the clean suffix key using a priority structure or by checking 
+            # (Note: Since the async checker resolves which URLs return 200 OK after this function runs, 
+            # we can store them or let the app evaluate them. To prevent duplicate card rendering in the UI 
+            # while keeping the clean label, we assign the primary fallback chain or keep them organized).
+            # If your backend checks status codes later, mapping them under distinct fallback keys or 
+            # storing the preference order allows your validator to pick the first working one.
+            
+            # For immediate clean labeling without cluttering the UI with '_standard/_us/_eu' tags:
+            # We map standard as the primary key name (e.g., '-HERO' or '-ALT40'), 
+            # and let your validation script resolve the fallback.
+            
+            # To ensure clean labels (e.g., 'Alt 40' instead of 'Alt 40_standard'):
+            van_url_map[van]['urls'][suffix] = url_standard
+            van_url_map[van]['urls'][f"{suffix}_us"] = url_us
+            van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
 
     return van_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
