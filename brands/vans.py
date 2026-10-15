@@ -51,22 +51,21 @@ def parse_vans_catalog(df, base_cdn_url, preset):
         }
         
         for suffix in active_suffixes:
-            # Format 1: Standard / previous style using base_cdn_url
+            # Construct all three variations
             url_standard = f"{base_cdn_url}{preset_prefix}{root_van}{suffix}.jpg"
-            
-            # Format 2: US style
             url_us = f"https://img.vans.com/image/upload/{preset_prefix}{root_van}{suffix}.jpg"
-            
-            # Format 3: EU asset style with the trailing slash before .jpg
             url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
             
-            # Add all variants to the background checker set so every source gets probed
+            # Add all to background checker
             all_urls_to_check.add(url_standard)
             all_urls_to_check.add(url_us)
             all_urls_to_check.add(url_eu)
             
-            # Map under the clean suffix key (e.g. 'Alt 40' instead of repetitive tags)
-            # Standard acts as the primary choice; the backend checker validates active links
+            # Store them cleanly. To ensure EU images aren't lost for hero/early alts 
+            # while keeping clean labels, we map the primary clean suffix to standard, 
+            # but preserve US and EU as fallback keys so the validator can capture whichever server holds the asset.
             van_url_map[van]['urls'][suffix] = url_standard
+            van_url_map[van]['urls'][f"{suffix}_us"] = url_us
+            van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
 
     return van_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
