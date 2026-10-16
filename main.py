@@ -27,13 +27,23 @@ from security import hash_password
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from brands.northface import (
-    ALL_UNIQUE_SUFFIXES as TNF_SUFFIXES,
-    PROBE_GROUPS as TNF_PROBE_GROUPS,
-    REGIONAL_SOURCES as TNF_REGIONAL,
-    parse_northface_catalog,
-)
-from brands.vans import parse_vans_catalog, prune_fallbacks as prune_vans_fallbacks, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
+try:
+    from brands.northface import (
+        ALL_UNIQUE_SUFFIXES as TNF_SUFFIXES,
+        PROBE_GROUPS as TNF_PROBE_GROUPS,
+        REGIONAL_SOURCES as TNF_REGIONAL,
+        parse_northface_catalog,
+    )
+except ImportError:                     # brands/northface.py not deployed yet: keep the other brands working
+    TNF_SUFFIXES, TNF_PROBE_GROUPS, TNF_REGIONAL, parse_northface_catalog = [], [], [], None
+    logging.getLogger("uvicorn.error").warning("brands/northface.py not found: The North Face is unavailable.")
+
+from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
+try:
+    from brands.vans import prune_fallbacks as prune_vans_fallbacks
+except ImportError:                     # older vans.py without the fallback step
+    prune_vans_fallbacks = None
+    logging.getLogger("uvicorn.error").warning("brands/vans.py has no prune_fallbacks: duplicate images will not be removed.")
 from brands.timberland import (
     scrape_timberland_catalog,
     ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES,
@@ -403,6 +413,8 @@ async def analyze_catalog(
     elif brand_lower == "timberland":
         item_url_map, all_urls, _ = scrape_timberland_catalog(df, cfg["base"], cfg["preset"])
     else:
+        if parse_northface_catalog is None:
+            raise HTTPException(status_code=400, detail="This brand is not available yet.")
         item_url_map, all_urls, _ = parse_northface_catalog(df)
 
     if not item_url_map:
@@ -457,7 +469,7 @@ async def analyze_catalog(
                         valid.setdefault(u, False)
                 else:
                     valid = await validate_urls(all_urls, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Validating asset availability", 2, 96))
-                    if brand_lower == "vans":
+                    if brand_lower == "vans" and prune_vans_fallbacks:
                         prune_vans_fallbacks(item_url_map, valid)   # standard first, then US, then EU
 
                 if regional:
