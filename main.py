@@ -379,6 +379,7 @@ async def analyze_catalog(
     brand: str = Form("vans"),
     file: UploadFile = File(None),
     codes: str = Form(""),
+    sources: str = Form(""),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -409,7 +410,11 @@ async def analyze_catalog(
     df = normalize_catalog(df, brand_lower)
 
     if brand_lower == "vans":
-        item_url_map, all_urls, _ = parse_vans_catalog(df, cfg["base"], cfg["preset"])
+        # Image-source selection (standard / us / eu) is an administrator option; everyone else checks all sources
+        chosen = tuple(x for x in dict.fromkeys(p.strip().lower() for p in sources.split(",")) if x in ("standard", "us", "eu"))
+        if user.role != "admin" or not chosen:
+            chosen = ("standard", "us", "eu")
+        item_url_map, all_urls, _ = parse_vans_catalog(df, cfg["base"], cfg["preset"], sources=chosen)
     elif brand_lower == "timberland":
         item_url_map, all_urls, _ = scrape_timberland_catalog(df, cfg["base"], cfg["preset"])
     else:
@@ -535,8 +540,8 @@ async def coverage_report(payload: dict, _user: User = Depends(current_user)):
         active += 1 if valid else 0
         row = [code, data.get("root", ""), data.get("division", ""), "Active" if valid else "Missing", valid]
         for s in suffixes:
-            u = urls.get(s)
-            row.append(u if u and available.get(u, False) else "")
+            u = next((urls[k] for k in (s, s + "_us", s + "_eu") if k in urls and available.get(urls[k], False)), "")
+            row.append(u)
         ws.append(row)
 
     link_cols = range(6, len(headers) + 1)
