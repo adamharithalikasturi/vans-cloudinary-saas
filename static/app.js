@@ -122,6 +122,7 @@ async function runAnalysis() {
     const brand = document.querySelector('input[name="brand"]:checked').value;
     const fd = new FormData();
     fd.append('brand', brand);
+    if (!$('sourcesField').classList.contains('hidden')) fd.append('sources', selectedSources().join(','));
     let sourceName;
     if (inputMode === 'file') {
         if (!state.file) { toast('Please upload a file first.', 'error'); return; }
@@ -184,7 +185,7 @@ function populateResults(brand) {
     const s = state.data.summary;
     const missing = s.total_items - s.active_items;
     const pct = s.total_items ? (s.active_items / s.total_items) * 100 : 0;
-    $('resultsBrand').textContent = brand.charAt(0).toUpperCase() + brand.slice(1);
+    $('resultsBrand').textContent = { vans: 'Vans', timberland: 'Timberland', northface: 'The North Face' }[brand] || brand;
     $('resultsFile').textContent = state.fileName;
     $('mTotal').textContent = fmt(s.total_items);
     $('mActive').textContent = fmt(s.active_items);
@@ -490,12 +491,45 @@ $('exportSelectedBtn').addEventListener('click', e => {
     runDownload(e.currentTarget, '/api/v1/reports/export', { rows, filename: 'Image_Export_Selected' }, 'Image_Export_Selected.xlsx');
 });
 
+/* ------------------------------------------------------------ image sources (administrators, Vans) */
+const srcBoxes = () => [...document.querySelectorAll('.src')];
+function selectedSources() { return srcBoxes().filter(b => b.checked).map(b => b.value); }
+function updateSourcesUI() {
+    const sel = selectedSources(), all = srcBoxes();
+    $('srcAll').checked = sel.length === all.length;
+    $('srcAll').indeterminate = sel.length > 0 && sel.length < all.length;
+    const names = { standard: 'Standard', us: 'US', eu: 'EU' };
+    $('sourcesLabel').textContent = sel.length === all.length ? 'All sources' : sel.map(v => names[v]).join(', ');
+}
+function updateSourcesVisibility() {
+    const brand = document.querySelector('input[name="brand"]:checked').value;
+    const show = me && me.role === 'admin' && brand === 'vans';
+    $('sourcesField').classList.toggle('hidden', !show);
+    if (!show) closeSourcesMenu();
+}
+function closeSourcesMenu() { $('sourcesMenu').classList.add('hidden'); $('sourcesBtn').setAttribute('aria-expanded', 'false'); }
+$('sourcesBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    const open = $('sourcesMenu').classList.toggle('hidden') === false;
+    $('sourcesBtn').setAttribute('aria-expanded', String(open));
+});
+$('sourcesMenu').addEventListener('click', e => e.stopPropagation());
+document.addEventListener('click', closeSourcesMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSourcesMenu(); });
+$('srcAll').addEventListener('change', () => { srcBoxes().forEach(b => { b.checked = $('srcAll').checked; }); updateSourcesUI(); });
+srcBoxes().forEach(b => b.addEventListener('change', () => {
+    if (!selectedSources().length) { b.checked = true; toast('Select at least one source.', 'error', null, 2500); }
+    updateSourcesUI();
+}));
+document.querySelectorAll('input[name="brand"]').forEach(r => r.addEventListener('change', updateSourcesVisibility));
+
 /* ------------------------------------------------------------ account */
 function renderUser() {
     if (!me || !me.usage) return;
     $('userName').textContent = me.name || me.email;
     $('userBox').classList.remove('hidden');
     $('adminLink').classList.toggle('hidden', me.role !== 'admin');
+    updateSourcesVisibility();
     const { used, limit } = me.usage;
     $('usageBox').classList.remove('hidden');
     if (limit === null) {
