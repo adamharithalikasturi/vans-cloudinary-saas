@@ -265,3 +265,20 @@ a{color:var(--accent)}
 .dialog .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .dialog-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:6px}
 @media(max-width:600px){.dialog .two{grid-template-columns:1fr}}
+
+.brand-options{grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+
+/* Image source dropdown */
+.sources{margin-top:18px}
+.field-label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
+.dropdown{position:relative;max-width:320px}
+.dd-btn{width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;height:42px;padding:0 14px;border:1px solid var(--line-2);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer;font-weight:500}
+.dd-btn:hover{border-color:var(--accent)}
+.dd-btn[aria-expanded="true"]{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.dd-btn svg{color:var(--muted);transition:transform .15s}
+.dd-btn[aria-expanded="true"] svg{transform:rotate(180deg)}
+.dd-menu{position:absolute;z-index:40;top:calc(100% + 6px);left:0;right:0;background:var(--surface);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.18);padding:6px}
+.dd-item{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px}
+.dd-item:hover{background:var(--hover)}
+.dd-item input{width:16px;height:16px;accent-color:var(--accent);cursor:pointer}
+.dd-all{border-bottom:1px solid var(--line);border-radius:8px 8px 0 0;margin-bottom:4px;font-weight:600}
