@@ -27,7 +27,13 @@ from security import hash_password
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from brands.vans import parse_vans_catalog, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
+from brands.northface import (
+    ALL_UNIQUE_SUFFIXES as TNF_SUFFIXES,
+    PROBE_GROUPS as TNF_PROBE_GROUPS,
+    REGIONAL_SOURCES as TNF_REGIONAL,
+    parse_northface_catalog,
+)
+from brands.vans import parse_vans_catalog, prune_fallbacks as prune_vans_fallbacks, ALL_UNIQUE_SUFFIXES as VANS_SUFFIXES
 from brands.timberland import (
     scrape_timberland_catalog,
     ALL_UNIQUE_SUFFIXES as TIMBERLAND_SUFFIXES,
@@ -132,7 +138,21 @@ BRAND_CONFIG = {
             _site_lookup("Global", "timberland.com"),
         ],
     },
+    "northface": {
+        "lookups": [
+            _site_lookup("Singapore", "thenorthface.com.sg"),
+            _site_lookup("Hong Kong", "thenorthface.com.hk"),
+            _site_lookup("Taiwan", "thenorthface.com.tw"),
+            _site_lookup("Korea", "thenorthface.co.kr"),
+            _site_lookup("Global", "thenorthface.com"),
+        ],
+    },
 }
+
+# Per-brand probing: check one "probe" angle first, then the rest only where it exists (cuts requests a lot)
+PROBES = {"timberland": TIMBERLAND_PROBE_GROUPS, "northface": TNF_PROBE_GROUPS}
+REGIONAL = {"timberland": TIMBERLAND_REGIONAL, "northface": TNF_REGIONAL}
+SUFFIXES_BY_BRAND = {"vans": VANS_SUFFIXES, "timberland": TIMBERLAND_SUFFIXES, "northface": TNF_SUFFIXES}
 MAX_ITEMS_PER_RUN = int(os.getenv("MAX_ITEMS_PER_RUN", "20000"))
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "400"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "5"))
@@ -278,7 +298,7 @@ def _norm(c):
     return re.sub(r"[^A-Z0-9]", "", str(c).upper())
 
 
-def normalize_catalog(df):
+def normalize_catalog(df, brand=""):
     """Accept anything from a single column of codes to a full SAP export.
     Returns a frame with at least 'VENDOR ARTICLE NO.'; other columns are optional."""
     df = df.copy()
@@ -293,11 +313,18 @@ def normalize_catalog(df):
         cols = list(df.columns)
 
     code_col = None
+    if brand == "northface":
+        # SAP exports: the 12-character style/colour code is in 'Old Article Number'
+        for key in ("OLDARTICLENUMBER", "VENDORARTICLECODE", "VENDORARTICLENO"):
+            code_col = next((c for c in cols if _norm(c) == key and df[c].astype(str).str.strip().str.upper().str.startswith("NF0A").any()), None)
+            if code_col:
+                break
     keys = ["VENDORARTICLENO", "VENDORARTICLE", "ARTICLENO", "ARTICLE", "STYLE", "SKU", "ITEMCODE", "ITEM", "PRODUCTCODE", "CODE", "VAN"]
-    for key in keys:
-        code_col = next((c for c in cols if _norm(c) == key), None)
-        if code_col:
-            break
+    if not code_col:
+        for key in keys:
+            code_col = next((c for c in cols if _norm(c) == key), None)
+            if code_col:
+                break
     if not code_col:
         for key in keys[:5]:
             code_col = next((c for c in cols if key in _norm(c)), None)
@@ -305,6 +332,8 @@ def normalize_catalog(df):
                 break
     if not code_col:
         for c in cols:
+            if any(w in _norm(c) for w in ("BARCODE", "EAN", "GTIN", "UPC")):
+                continue          # barcodes look like codes but are not image keys
             sample = df[c].dropna().astype(str).head(200)
             if len(sample) and sample.map(looks_like_code).mean() > 0.6:
                 code_col = c
@@ -322,7 +351,8 @@ def normalize_catalog(df):
     df = df[~df["VENDOR ARTICLE NO."].isin(["", "NAN", "NONE"])]
 
     if "MH3 DIVISION" not in df.columns:
-        df["MH3 DIVISION"] = df["DIVISION"] if "DIVISION" in df.columns else ""
+        src = next((c for c in ("DIVISION", "MH3") if c in df.columns), None)
+        df["MH3 DIVISION"] = df[src] if src else ""
     if "AH1 SILLOUTE" not in df.columns:
         df["AH1 SILLOUTE"] = ""
     return df
@@ -361,17 +391,19 @@ async def analyze_catalog(
     else:
         raise HTTPException(status_code=400, detail="Please upload a file or paste item codes.")
 
-    df = normalize_catalog(df)
-
     brand_lower = brand.lower().strip()
     cfg = BRAND_CONFIG.get(brand_lower)
     if not cfg:
         raise HTTPException(status_code=400, detail="Unsupported brand selection.")
 
+    df = normalize_catalog(df, brand_lower)
+
     if brand_lower == "vans":
         item_url_map, all_urls, _ = parse_vans_catalog(df, cfg["base"], cfg["preset"])
-    else:
+    elif brand_lower == "timberland":
         item_url_map, all_urls, _ = scrape_timberland_catalog(df, cfg["base"], cfg["preset"])
+    else:
+        item_url_map, all_urls, _ = parse_northface_catalog(df)
 
     if not item_url_map:
         raise HTTPException(status_code=400, detail="No valid products were found in the file.")
@@ -390,7 +422,8 @@ async def analyze_catalog(
 
     user_id = user.id
     source = (file.filename if file is not None and file.filename else f"{n_items} pasted codes")[:250]
-    regional = TIMBERLAND_REGIONAL if brand_lower == "timberland" else []
+    regional = REGIONAL.get(brand_lower, [])
+    probe_groups = PROBES.get(brand_lower)
 
     async def event_stream():
         queue: asyncio.Queue = asyncio.Queue()
@@ -409,12 +442,12 @@ async def analyze_catalog(
         async def worker():
             try:
                 queue.put_nowait({"type": "progress", "percent": 1, "done": 0, "total": 0, "message": "Preparing analysis"})
-                if brand_lower == "timberland":
-                    probes = {p for p, _ in TIMBERLAND_PROBE_GROUPS}
+                if probe_groups:
+                    probes = {p for p, _ in probe_groups}
                     probe_urls = {d["urls"][p] for d in item_url_map.values() for p in probes if p in d["urls"]}
                     valid = await validate_urls(probe_urls, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Validating asset availability", 2, 30))
                     rest = set()
-                    for probe, group in TIMBERLAND_PROBE_GROUPS:
+                    for probe, group in probe_groups:
                         for d in item_url_map.values():
                             if valid.get(d["urls"].get(probe), False):
                                 rest.update(d["urls"][s_] for s_ in group if s_ in d["urls"])
@@ -424,6 +457,8 @@ async def analyze_catalog(
                         valid.setdefault(u, False)
                 else:
                     valid = await validate_urls(all_urls, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Validating asset availability", 2, 96))
+                    if brand_lower == "vans":
+                        prune_vans_fallbacks(item_url_map, valid)   # standard first, then US, then EU
 
                 if regional:
                     await regional_pass(item_url_map, valid, regional, MAX_CONCURRENT, REQUEST_TIMEOUT, stage("Checking additional markets", 90, 97))
@@ -469,7 +504,7 @@ async def coverage_report(payload: dict, _user: User = Depends(current_user)):
     brand = str(payload.get("brand", "vans")).lower()
     items = payload.get("items", {})
     available = payload.get("available", {})
-    suffixes = TIMBERLAND_SUFFIXES if brand == "timberland" else VANS_SUFFIXES
+    suffixes = SUFFIXES_BY_BRAND.get(brand, VANS_SUFFIXES)
 
     def title(sfx):
         return "Hero View" if sfx == "-HERO" else f"Alt {sfx.replace('-ALT', '')}"
