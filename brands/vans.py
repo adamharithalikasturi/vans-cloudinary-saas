@@ -53,7 +53,7 @@ def parse_vans_catalog(df, base_cdn_url, preset):
         for suffix in active_suffixes:
             # Construct all three variations
             url_standard = f"{base_cdn_url}{preset_prefix}{root_van}{suffix}.jpg"
-            url_us = f"https://img.vans.com/image/upload/{preset_prefix}{root_van}{suffix}.jpg"
+            url_us = f"https://assets.vans.com/images/{preset_prefix}{root_van}{suffix}/.jpg"
             url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
             
             # Add all to background checker
