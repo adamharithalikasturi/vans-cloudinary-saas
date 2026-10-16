@@ -18,7 +18,7 @@ ALL_UNIQUE_SUFFIXES = list(dict.fromkeys(
     [s[0] for s in FOOTWEAR_SUFFIXES + APPAREL_SUFFIXES + ACCESSORY_SUFFIXES]
 ))
 
-def parse_vans_catalog(df, base_cdn_url, preset):
+def parse_vans_catalog(df, base_cdn_url, preset, sources=("standard", "us", "eu")):
     df_unique = df.drop_duplicates(subset=['VENDOR ARTICLE NO.']).copy()
     van_url_map = {}
     all_urls_to_check = set()
@@ -56,17 +56,16 @@ def parse_vans_catalog(df, base_cdn_url, preset):
             url_us = f"https://assets.vans.com/images/{preset_prefix}{root_van}{suffix}/.jpg"
             url_eu = f"https://assets.vans.eu/images/{preset_prefix}{root_van}{suffix}/.jpg"
             
-            # Add all to background checker
-            all_urls_to_check.add(url_standard)
-            all_urls_to_check.add(url_us)
-            all_urls_to_check.add(url_eu)
-            
-            # Store them cleanly. To ensure EU images aren't lost for hero/early alts 
-            # while keeping clean labels, we map the primary clean suffix to standard, 
-            # but preserve US and EU as fallback keys so the validator can capture whichever server holds the asset.
-            van_url_map[van]['urls'][suffix] = url_standard
-            van_url_map[van]['urls'][f"{suffix}_us"] = url_us
-            van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
+            # Only the servers selected for this run are checked (default: all three)
+            if "standard" in sources:
+                all_urls_to_check.add(url_standard)
+                van_url_map[van]['urls'][suffix] = url_standard
+            if "us" in sources:
+                all_urls_to_check.add(url_us)
+                van_url_map[van]['urls'][f"{suffix}_us"] = url_us
+            if "eu" in sources:
+                all_urls_to_check.add(url_eu)
+                van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
 
     return van_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
 
@@ -93,7 +92,8 @@ def prune_fallbacks(van_url_map, valid):
 
     for data in van_url_map.values():
         urls = data["urls"]
-        slots = [k for k in urls if not k.endswith(FALLBACK_ORDER)]      # "-HERO", "-ALT1", ...
+        # "-HERO", "-ALT1", ... (also works when the standard server was not selected for the run)
+        slots = list(dict.fromkeys(k[:-3] if k.endswith(FALLBACK_ORDER) else k for k in urls))
 
         for slot in slots:
             candidates = [(slot, urls.get(slot))] + [(slot + tag, urls.get(slot + tag)) for tag in FALLBACK_ORDER]
