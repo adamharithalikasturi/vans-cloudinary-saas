@@ -69,3 +69,46 @@ def parse_vans_catalog(df, base_cdn_url, preset):
             van_url_map[van]['urls'][f"{suffix}_eu"] = url_eu
 
     return van_url_map, all_urls_to_check, ALL_UNIQUE_SUFFIXES
+
+
+# ---------------------------------------------------------------------------
+# Server fallback: standard first, then US, then EU.
+#
+# parse_vans_catalog() builds up to three addresses per image slot:
+#     "<suffix>"      -> standard server   (shown as e.g. "Alt 40")
+#     "<suffix>_us"   -> US server         (shown as e.g. "Alt 40_us")
+#     "<suffix>_eu"   -> EU server         (shown as e.g. "Alt 40_eu")
+# After the availability check, prune_fallbacks() keeps only ONE per slot:
+#     standard found  -> use standard, ignore US and EU
+#     else US found   -> use US, ignore EU
+#     else EU found   -> use EU
+# Nothing is deleted from the parsing logic above; this only removes duplicates afterwards.
+# ---------------------------------------------------------------------------
+FALLBACK_ORDER = ("_us", "_eu")      # standard is always tried first
+
+
+def prune_fallbacks(van_url_map, valid):
+    """Mutates van_url_map and valid (url -> bool) in place so each image slot has a single winner."""
+    keep, discard = set(), set()
+
+    for data in van_url_map.values():
+        urls = data["urls"]
+        slots = [k for k in urls if not k.endswith(FALLBACK_ORDER)]      # "-HERO", "-ALT1", ...
+
+        for slot in slots:
+            candidates = [(slot, urls.get(slot))] + [(slot + tag, urls.get(slot + tag)) for tag in FALLBACK_ORDER]
+            candidates = [(k, u) for k, u in candidates if u]
+
+            winner_key = next((k for k, u in candidates if valid.get(u, False)), None)
+            for key, url in candidates:
+                if key == winner_key:
+                    keep.add(url)
+                else:
+                    discard.add(url)
+                    if key != slot:               # keep the standard key (even when empty) so slots stay stable
+                        urls.pop(key, None)       # drop losing fallbacks to keep results small
+
+    # Never switch off an address that is also a winner (standard and US can be the same address)
+    for url in discard - keep:
+        if url in valid:
+            valid[url] = False
