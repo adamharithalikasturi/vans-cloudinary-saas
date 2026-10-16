@@ -62,9 +62,29 @@
                             <span class="brand-card"><strong>Vans</strong><em>Footwear, apparel and accessories</em></span>
                         </label>
                         <label class="brand-option">
+                            <input type="radio" name="brand" value="northface">
+                            <span class="brand-card"><strong>The North Face</strong><em>Apparel, footwear and equipment</em></span>
+                        </label>
+                        <label class="brand-option">
                             <input type="radio" name="brand" value="timberland">
                             <span class="brand-card"><strong>Timberland</strong><em>Footwear, apparel and accessories</em></span>
                         </label>
+                    </div>
+
+                    <div id="sourcesField" class="sources hidden">
+                        <span class="field-label">Image sources</span>
+                        <div class="dropdown">
+                            <button type="button" id="sourcesBtn" class="dd-btn" aria-haspopup="true" aria-expanded="false">
+                                <span id="sourcesLabel">All sources</span>
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            <div id="sourcesMenu" class="dd-menu hidden" role="menu">
+                                <label class="dd-item dd-all"><input type="checkbox" id="srcAll" checked><span>Select all</span></label>
+                                <label class="dd-item"><input type="checkbox" class="src" value="standard" checked><span>Standard</span></label>
+                                <label class="dd-item"><input type="checkbox" class="src" value="us" checked><span>US</span></label>
+                                <label class="dd-item"><input type="checkbox" class="src" value="eu" checked><span>EU</span></label>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
